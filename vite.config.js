@@ -8,8 +8,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Freestyle',
-        short_name: 'Freestyle',
+        name: 'Trappin Japan',
+        short_name: 'Trappin Japan',
         description: 'Async rap battle app',
         theme_color: '#0a0a0a',
         background_color: '#0a0a0a',

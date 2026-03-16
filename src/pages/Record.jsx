@@ -33,13 +33,24 @@ export default function Record() {
 
   const handleRecord = async () => {
     if (recording) {
-      stop()
-      beatAudioRef.current?.pause()
+      stop(beatAudioRef.current)
     } else {
-      await start()
-      if (beatAudioRef.current) {
-        beatAudioRef.current.currentTime = 0
-        beatAudioRef.current.play()
+      // Pass beat audio element so it gets mixed into the recording
+      await start(beatAudioRef.current)
+    }
+  }
+
+  const handleShare = async (code) => {
+    const url = `${window.location.origin}/battle/${code}`
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Freestyle Challenge',
+          text: 'I just dropped a freestyle. Think you can do better?',
+          url
+        })
+      } catch (e) {
+        // user cancelled share — fall through to copy
       }
     }
   }
@@ -96,6 +107,9 @@ export default function Record() {
     return (
       <div>
         <div className="page-header"><h1>Pick a Beat</h1></div>
+        {beats.length === 0 && (
+          <div className="empty">No beats yet. Upload some on the Beats page!</div>
+        )}
         {beats.map(b => (
           <div key={b.id} className="card beat-row" onClick={() => setSelectedBeat(b)} style={{ cursor: 'pointer' }}>
             <div style={{ flex: 1 }}>
@@ -111,12 +125,15 @@ export default function Record() {
   return (
     <div className="record-page">
       {selectedBeat && (
-        <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" />
+        <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" crossOrigin="anonymous" />
       )}
 
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
+      </div>
+      <div style={{ fontSize: '0.75rem', color: 'var(--color-green)', marginTop: -8 }}>
+        Studio voice effects ON
       </div>
 
       <div className="record-timer">{formatDuration(duration)}</div>
@@ -130,7 +147,10 @@ export default function Record() {
 
       {audioBlob && !recording && (
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <AudioPlayer src={URL.createObjectURL(audioBlob)} />
+          <div className="card">
+            <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle (with effects)</div>
+            <AudioPlayer src={URL.createObjectURL(audioBlob)} />
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary btn-full" onClick={reset}>Redo</button>
             <button
@@ -138,7 +158,7 @@ export default function Record() {
               onClick={() => handleSave(battleId ? 'respond' : 'challenge')}
               disabled={saving}
             >
-              {saving ? 'Sending...' : battleId ? 'Send Response' : 'Challenge a Friend'}
+              {saving ? 'Sending...' : battleId ? 'Send Response' : 'Challenge'}
             </button>
           </div>
         </div>
@@ -147,24 +167,42 @@ export default function Record() {
       {shareCode && (
         <div className="share-overlay" onClick={() => { setShareCode(null); reset() }}>
           <div className="share-card" onClick={e => e.stopPropagation()}>
-            <h2>Challenge Sent!</h2>
-            <p style={{ color: 'var(--color-text-muted)' }}>Share this link with your opponent</p>
-            <div className="share-link">
-              {window.location.origin}/battle/{shareCode}
-            </div>
+            <h2>Challenge Ready</h2>
+            <p style={{ color: 'var(--color-text-muted)' }}>Send this to whoever you want to battle</p>
+
             <button
               className="btn btn-primary btn-full"
               onClick={() => {
+                const url = `${window.location.origin}/battle/${shareCode}`
+                const text = `I just dropped a freestyle on Trappin Japan. Think you can do better? ${url}`
+                if (navigator.share) {
+                  navigator.share({ title: 'Trappin Japan', text })
+                } else {
+                  window.open(`sms:?&body=${encodeURIComponent(text)}`, '_self')
+                }
+              }}
+            >
+              Send to a Friend
+            </button>
+
+            <button
+              className="btn btn-secondary btn-full"
+              onClick={() => {
                 navigator.clipboard.writeText(`${window.location.origin}/battle/${shareCode}`)
+                const btn = document.activeElement
+                btn.textContent = 'Copied!'
+                setTimeout(() => { btn.textContent = 'Copy Link' }, 2000)
               }}
             >
               Copy Link
             </button>
+
             <button
               className="btn btn-secondary btn-full"
               onClick={() => { setShareCode(null); navigate('/battles') }}
+              style={{ color: 'var(--color-text-muted)' }}
             >
-              Go to Battles
+              Done
             </button>
           </div>
         </div>

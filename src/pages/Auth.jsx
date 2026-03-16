@@ -5,7 +5,7 @@ export default function Auth() {
 
   return (
     <div className="auth-page">
-      <h1>Freestyle</h1>
+      <h1>Trappin Japan</h1>
       <p>Async rap battles with friends</p>
       <button className="btn btn-primary" onClick={signIn}>
         Sign in with Google
