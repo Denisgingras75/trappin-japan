@@ -1,5 +1,6 @@
-// Vercel serverless function: extract audio URL from YouTube
-// Uses cobalt.tools API (free, no auth needed)
+// Vercel serverless function: get YouTube video info for embedding
+// Since audio extraction APIs are locked down, we embed the video
+// and let users play it while recording
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -12,39 +13,36 @@ export default async function handler(req, res) {
   const { url } = req.body
   if (!url) return res.status(400).json({ error: 'Missing url' })
 
-  // Validate it's a YouTube URL
-  const ytRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[\w-]+/
-  if (!ytRegex.test(url)) {
-    return res.status(400).json({ error: 'Not a valid YouTube URL' })
+  // Extract video ID
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=)([\w-]+)/,
+    /(?:youtu\.be\/)([\w-]+)/,
+    /(?:youtube\.com\/shorts\/)([\w-]+)/
+  ]
+
+  let videoId = null
+  for (const p of patterns) {
+    const m = url.match(p)
+    if (m) { videoId = m[1]; break }
   }
 
+  if (!videoId) return res.status(400).json({ error: 'Could not parse YouTube URL' })
+
+  // Get video title from oEmbed (no API key needed)
   try {
-    const response = await fetch('https://api.cobalt.tools/api/json', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        url,
-        aFormat: 'mp3',
-        isAudioOnly: true,
-        filenamePattern: 'basic'
-      })
+    const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
+    const oembed = await oembedRes.json()
+
+    return res.status(200).json({
+      videoId,
+      title: oembed.title || 'YouTube Beat',
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=0`
     })
-
-    const data = await response.json()
-
-    if (data.status === 'stream' || data.status === 'redirect') {
-      return res.status(200).json({ audioUrl: data.url })
-    }
-
-    if (data.status === 'error') {
-      return res.status(400).json({ error: data.text || 'Failed to extract audio' })
-    }
-
-    return res.status(400).json({ error: 'Unexpected response from extraction service' })
   } catch (e) {
-    return res.status(500).json({ error: 'Extraction service unavailable' })
+    return res.status(200).json({
+      videoId,
+      title: 'YouTube Beat',
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=0`
+    })
   }
 }

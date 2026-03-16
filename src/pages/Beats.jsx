@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import AudioPlayer from '../components/AudioPlayer'
+import YouTubePlayer from '../components/YouTubePlayer'
 
 export default function Beats() {
   const [beats, setBeats] = useState([])
@@ -65,9 +66,9 @@ export default function Beats() {
     loadBeats()
   }
 
-  async function handleYouTubeRip() {
+  async function handleYouTubeAdd() {
     if (!ytUrl.trim()) return
-    setYtStatus('Extracting audio...')
+    setYtStatus('Getting video info...')
     try {
       const res = await fetch('/api/youtube', {
         method: 'POST',
@@ -77,13 +78,12 @@ export default function Beats() {
       const data = await res.json()
       if (!res.ok) { setYtStatus(data.error || 'Failed'); return }
 
-      // Save the extracted audio URL as a beat
       setYtStatus('Saving beat...')
       const user = (await supabase.auth.getUser()).data.user
-      const title = urlTitle.trim() || 'YouTube Beat'
+      const title = urlTitle.trim() || data.title || 'YouTube Beat'
       await supabase.from('beats').insert({
         title,
-        audio_url: data.audioUrl,
+        audio_url: `youtube:${data.videoId}`,
         uploaded_by: user.id,
         is_curated: false
       })
@@ -94,7 +94,7 @@ export default function Beats() {
       setTab('mine')
       loadBeats()
     } catch (e) {
-      setYtStatus('Failed to extract — try a direct URL instead')
+      setYtStatus('Failed — check the URL and try again')
     }
   }
 
@@ -184,9 +184,9 @@ export default function Beats() {
                   {ytStatus}
                 </div>
               )}
-              <button className="btn btn-primary btn-full" onClick={handleYouTubeRip}
+              <button className="btn btn-primary btn-full" onClick={handleYouTubeAdd}
                 disabled={!ytUrl.trim() || ytStatus.includes('...')}>
-                {ytStatus.includes('...') ? ytStatus : 'Rip Audio'}
+                {ytStatus.includes('...') ? ytStatus : 'Add Beat'}
               </button>
             </div>
           )}
@@ -235,7 +235,9 @@ export default function Beats() {
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            <AudioPlayer src={beat.audio_url} />
+            {beat.audio_url.startsWith('youtube:')
+              ? <YouTubePlayer videoId={beat.audio_url.replace('youtube:', '')} small />
+              : <AudioPlayer src={beat.audio_url} />}
           </div>
         </div>
       ))}
