@@ -26,7 +26,7 @@ function AppRoutes() {
             <Route path="/record" element={<Record />} />
             <Route path="/battles" element={<Battles />} />
             <Route path="/battles/:id" element={<BattleThread />} />
-            <Route path="/install" element={<Install />} />
+            <Route path="/share" element={<Install />} />
           </>
         )}
       </Routes>
