@@ -9,8 +9,11 @@ export default function Beats() {
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [addMode, setAddMode] = useState('file') // file | url | youtube
   const [urlValue, setUrlValue] = useState('')
   const [urlTitle, setUrlTitle] = useState('')
+  const [ytUrl, setYtUrl] = useState('')
+  const [ytStatus, setYtStatus] = useState('')
   const fileRef = useRef(null)
   const navigate = useNavigate()
 
@@ -62,6 +65,39 @@ export default function Beats() {
     loadBeats()
   }
 
+  async function handleYouTubeRip() {
+    if (!ytUrl.trim()) return
+    setYtStatus('Extracting audio...')
+    try {
+      const res = await fetch('/api/youtube', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: ytUrl.trim() })
+      })
+      const data = await res.json()
+      if (!res.ok) { setYtStatus(data.error || 'Failed'); return }
+
+      // Save the extracted audio URL as a beat
+      setYtStatus('Saving beat...')
+      const user = (await supabase.auth.getUser()).data.user
+      const title = urlTitle.trim() || 'YouTube Beat'
+      await supabase.from('beats').insert({
+        title,
+        audio_url: data.audioUrl,
+        uploaded_by: user.id,
+        is_curated: false
+      })
+      setYtUrl('')
+      setUrlTitle('')
+      setYtStatus('')
+      setShowAdd(false)
+      setTab('mine')
+      loadBeats()
+    } catch (e) {
+      setYtStatus('Failed to extract — try a direct URL instead')
+    }
+  }
+
   function handleDrop(e) {
     e.preventDefault()
     setDragging(false)
@@ -75,8 +111,9 @@ export default function Beats() {
     borderRadius: 'var(--radius-sm)',
     padding: '10px 12px',
     color: 'var(--color-text)',
-    fontSize: '0.9rem',
-    width: '100%'
+    fontSize: '0.85rem',
+    width: '100%',
+    fontFamily: 'var(--font-mono)'
   }
 
   return (
@@ -87,10 +124,14 @@ export default function Beats() {
     >
       {dragging && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(255,61,0,0.15)',
-          border: '3px dashed var(--color-accent)', borderRadius: 'var(--radius)',
+          position: 'fixed', inset: 0,
+          background: 'rgba(255,45,85,0.08)',
+          border: '3px dashed var(--color-neon-pink)',
+          borderRadius: 'var(--radius)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '1.2rem', fontWeight: 700, zIndex: 300, pointerEvents: 'none'
+          fontSize: '1rem', fontWeight: 500, zIndex: 300, pointerEvents: 'none',
+          fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.1em',
+          color: 'var(--color-neon-pink)'
         }}>
           Drop beat here
         </div>
@@ -99,36 +140,69 @@ export default function Beats() {
       <div className="page-header">
         <h1>Beats</h1>
         <button className="btn btn-primary" onClick={() => setShowAdd(!showAdd)}
-          style={{ padding: '8px 16px', fontSize: '0.85rem' }}>
-          {showAdd ? 'Cancel' : '+ Add Beat'}
+          style={{ padding: '8px 16px', fontSize: '0.75rem' }}>
+          {showAdd ? 'Cancel' : '+ Add'}
         </button>
       </div>
 
       {showAdd && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div
-            className="upload-area"
-            onClick={() => fileRef.current?.click()}
-            style={{ marginBottom: 12, padding: 20 }}
-          >
-            {uploading ? 'Uploading...' : 'Tap to choose file or drag & drop'}
+          <div className="tabs" style={{ marginBottom: 12 }}>
+            {[
+              { key: 'file', label: 'File' },
+              { key: 'youtube', label: 'YouTube' },
+              { key: 'url', label: 'URL' }
+            ].map(m => (
+              <button key={m.key}
+                className={`tab ${addMode === m.key ? 'active' : ''}`}
+                onClick={() => setAddMode(m.key)}>
+                {m.label}
+              </button>
+            ))}
           </div>
-          <input ref={fileRef} type="file" accept="audio/*" hidden onChange={e => uploadFile(e.target.files?.[0])} />
 
-          <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem', margin: '8px 0' }}>
-            — or paste a link —
-          </div>
+          {addMode === 'file' && (
+            <>
+              <div className="upload-area" onClick={() => fileRef.current?.click()}>
+                {uploading ? 'Uploading...' : 'Tap to choose or drag & drop'}
+              </div>
+              <input ref={fileRef} type="file" accept="audio/*" hidden onChange={e => uploadFile(e.target.files?.[0])} />
+            </>
+          )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input type="text" placeholder="Beat name (optional)" value={urlTitle}
-              onChange={e => setUrlTitle(e.target.value)} style={inputStyle} />
-            <input type="url" placeholder="Paste audio URL" value={urlValue}
-              onChange={e => setUrlValue(e.target.value)} style={inputStyle} />
-            <button className="btn btn-primary btn-full" onClick={handleUrlImport}
-              disabled={!urlValue.trim() || uploading}>
-              {uploading ? 'Adding...' : 'Add from URL'}
-            </button>
-          </div>
+          {addMode === 'youtube' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input type="text" placeholder="Beat name (optional)" value={urlTitle}
+                onChange={e => setUrlTitle(e.target.value)} style={inputStyle} />
+              <input type="url" placeholder="Paste YouTube URL" value={ytUrl}
+                onChange={e => setYtUrl(e.target.value)} style={{
+                  ...inputStyle,
+                  borderColor: ytUrl ? 'var(--color-neon-pink)' : 'var(--color-border)'
+                }} />
+              {ytStatus && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-neon-cyan)', fontFamily: 'var(--font-mono)' }}>
+                  {ytStatus}
+                </div>
+              )}
+              <button className="btn btn-primary btn-full" onClick={handleYouTubeRip}
+                disabled={!ytUrl.trim() || ytStatus.includes('...')}>
+                {ytStatus.includes('...') ? ytStatus : 'Rip Audio'}
+              </button>
+            </div>
+          )}
+
+          {addMode === 'url' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input type="text" placeholder="Beat name (optional)" value={urlTitle}
+                onChange={e => setUrlTitle(e.target.value)} style={inputStyle} />
+              <input type="url" placeholder="Direct audio URL (MP3, WAV)" value={urlValue}
+                onChange={e => setUrlValue(e.target.value)} style={inputStyle} />
+              <button className="btn btn-primary btn-full" onClick={handleUrlImport}
+                disabled={!urlValue.trim() || uploading}>
+                {uploading ? 'Adding...' : 'Add Beat'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -142,9 +216,9 @@ export default function Beats() {
 
       {beats.length === 0 && (
         <div className="empty">
-          {tab === 'mine' ? 'Drop a file or paste a URL to add your first beat'
+          {tab === 'mine' ? 'Drop a file, paste a URL, or rip from YouTube'
             : tab === 'curated' ? 'Loading curated beats...'
-            : 'No community beats yet — be the first'}
+            : 'No community beats yet'}
         </div>
       )}
 
@@ -156,7 +230,7 @@ export default function Beats() {
               <div className="beat-meta">{beat.is_curated ? 'Curated' : 'Community'}</div>
             </div>
             <button className="btn btn-primary" onClick={() => navigate('/record', { state: { beat } })}
-              style={{ padding: '8px 16px', fontSize: '0.8rem' }}>
+              style={{ padding: '8px 14px', fontSize: '0.7rem' }}>
               Spit
             </button>
           </div>

@@ -132,9 +132,13 @@ export default function Record() {
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
-      <div style={{ fontSize: '0.75rem', color: 'var(--color-green)', marginTop: -8 }}>
-        Studio voice effects ON
-      </div>
+      <div className="fx-badge">Studio FX Active</div>
+
+      {recording && (
+        <div className="viz-bars">
+          {[...Array(7)].map((_, i) => <div key={i} className="viz-bar" />)}
+        </div>
+      )}
 
       <div className="record-timer">{formatDuration(duration)}</div>
 

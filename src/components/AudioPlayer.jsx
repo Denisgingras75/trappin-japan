@@ -3,6 +3,8 @@ import { useState, useRef, useEffect } from 'react'
 export default function AudioPlayer({ src, accent }) {
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [dur, setDur] = useState(0)
+  const [cur, setCur] = useState(0)
   const audioRef = useRef(null)
 
   useEffect(() => {
@@ -10,14 +12,20 @@ export default function AudioPlayer({ src, accent }) {
     if (!audio) return
 
     const onTime = () => {
-      if (audio.duration) setProgress((audio.currentTime / audio.duration) * 100)
+      if (audio.duration) {
+        setProgress((audio.currentTime / audio.duration) * 100)
+        setCur(audio.currentTime)
+      }
     }
-    const onEnd = () => { setPlaying(false); setProgress(0) }
+    const onMeta = () => setDur(audio.duration || 0)
+    const onEnd = () => { setPlaying(false); setProgress(0); setCur(0) }
 
     audio.addEventListener('timeupdate', onTime)
+    audio.addEventListener('loadedmetadata', onMeta)
     audio.addEventListener('ended', onEnd)
     return () => {
       audio.removeEventListener('timeupdate', onTime)
+      audio.removeEventListener('loadedmetadata', onMeta)
       audio.removeEventListener('ended', onEnd)
     }
   }, [src])
@@ -25,48 +33,60 @@ export default function AudioPlayer({ src, accent }) {
   const toggle = () => {
     const audio = audioRef.current
     if (!audio) return
-    if (playing) {
-      audio.pause()
-    } else {
-      audio.play()
-    }
+    if (playing) audio.pause()
+    else audio.play()
     setPlaying(!playing)
   }
 
-  const formatTime = (s) => {
+  const seek = (e) => {
+    const audio = audioRef.current
+    const rect = e.currentTarget.getBoundingClientRect()
+    const pct = (e.clientX - rect.left) / rect.width
+    audio.currentTime = pct * audio.duration
+  }
+
+  const fmt = (s) => {
+    if (!s || !isFinite(s)) return '0:00'
     const m = Math.floor(s / 60)
     const sec = Math.floor(s % 60)
     return `${m}:${sec.toString().padStart(2, '0')}`
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
       <audio ref={audioRef} src={src} preload="metadata" />
-      <button
-        onClick={toggle}
-        className="play-btn"
-        style={accent ? { background: 'rgba(255,255,255,0.2)' } : {}}
-      >
-        {playing ? '||' : '\u25B6'}
+      <button onClick={toggle} className="play-btn"
+        style={accent ? { background: 'rgba(255,255,255,0.15)', boxShadow: 'none' } : {}}>
+        {playing ? '\u275A\u275A' : '\u25B6'}
       </button>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{
+        <div onClick={seek} style={{
           height: 4,
           background: 'var(--color-border)',
           borderRadius: 2,
-          overflow: 'hidden'
+          overflow: 'hidden',
+          cursor: 'pointer',
+          position: 'relative'
         }}>
           <div style={{
             height: '100%',
             width: `${progress}%`,
-            background: accent ? 'white' : 'var(--color-accent)',
+            background: accent
+              ? 'rgba(255,255,255,0.7)'
+              : 'linear-gradient(90deg, var(--color-neon-pink), var(--color-neon-cyan))',
             borderRadius: 2,
-            transition: 'width 0.1s linear'
+            transition: 'width 0.1s linear',
+            boxShadow: accent ? 'none' : '0 0 8px rgba(255,45,85,0.3)'
           }} />
         </div>
-        <span style={{ fontSize: '0.7rem', color: accent ? 'rgba(255,255,255,0.7)' : 'var(--color-text-muted)' }}>
-          {audioRef.current ? formatTime(audioRef.current.currentTime) : '0:00'}
-        </span>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          fontSize: '0.6rem', color: accent ? 'rgba(255,255,255,0.5)' : 'var(--color-text-muted)',
+          fontFamily: 'var(--font-mono)'
+        }}>
+          <span>{fmt(cur)}</span>
+          <span>{fmt(dur)}</span>
+        </div>
       </div>
     </div>
   )
