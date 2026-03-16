@@ -4,13 +4,23 @@ import { supabase } from '../lib/supabase'
 import AudioPlayer from '../components/AudioPlayer'
 import YouTubePlayer from '../components/YouTubePlayer'
 
+const CATEGORIES = [
+  { key: 'all', label: 'All' },
+  { key: 'boom-bap', label: 'Boom Bap' },
+  { key: 'trap', label: 'Trap' },
+  { key: 'chill', label: 'Chill' },
+  { key: 'dark', label: 'Dark' },
+  { key: 'hype', label: 'Hype' }
+]
+
 export default function Beats() {
   const [beats, setBeats] = useState([])
   const [tab, setTab] = useState('curated')
+  const [category, setCategory] = useState('all')
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  const [addMode, setAddMode] = useState('file') // file | url | youtube
+  const [addMode, setAddMode] = useState('file')
   const [urlValue, setUrlValue] = useState('')
   const [urlTitle, setUrlTitle] = useState('')
   const [ytUrl, setYtUrl] = useState('')
@@ -18,12 +28,13 @@ export default function Beats() {
   const fileRef = useRef(null)
   const navigate = useNavigate()
 
-  useEffect(() => { loadBeats() }, [tab])
+  useEffect(() => { loadBeats() }, [tab, category])
 
   async function loadBeats() {
     let query = supabase.from('beats').select('*').order('created_at', { ascending: false })
     if (tab === 'curated') query = query.eq('is_curated', true)
     if (tab === 'mine') query = query.eq('uploaded_by', (await supabase.auth.getUser()).data.user?.id)
+    if (category !== 'all') query = query.eq('category', category)
     const { data } = await query
     setBeats(data || [])
   }
@@ -214,10 +225,24 @@ export default function Beats() {
         ))}
       </div>
 
+      {tab === 'curated' && (
+        <div className="category-pills">
+          {CATEGORIES.map(c => (
+            <button
+              key={c.key}
+              className={`pill ${category === c.key ? 'active' : ''}`}
+              onClick={() => setCategory(c.key)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {beats.length === 0 && (
         <div className="empty">
           {tab === 'mine' ? 'Drop a file, paste a URL, or rip from YouTube'
-            : tab === 'curated' ? 'Loading curated beats...'
+            : tab === 'curated' ? 'No beats in this category'
             : 'No community beats yet'}
         </div>
       )}
@@ -227,7 +252,9 @@ export default function Beats() {
           <div className="beat-row">
             <div style={{ flex: 1 }}>
               <div className="beat-title">{beat.title}</div>
-              <div className="beat-meta">{beat.is_curated ? 'Curated' : 'Community'}</div>
+              <div className="beat-meta">
+                {beat.is_curated ? beat.category || 'Curated' : 'Community'}
+              </div>
             </div>
             <button className="btn btn-primary" onClick={() => navigate('/record', { state: { beat } })}
               style={{ padding: '8px 14px', fontSize: '0.7rem' }}>

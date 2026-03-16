@@ -7,6 +7,7 @@ import Record from './pages/Record'
 import Battles from './pages/Battles'
 import BattleThread from './pages/BattleThread'
 import Challenge from './pages/Challenge'
+import Install from './pages/Install'
 
 function AppRoutes() {
   const { user, loading } = useAuth()
@@ -25,6 +26,7 @@ function AppRoutes() {
             <Route path="/record" element={<Record />} />
             <Route path="/battles" element={<Battles />} />
             <Route path="/battles/:id" element={<BattleThread />} />
+            <Route path="/install" element={<Install />} />
           </>
         )}
       </Routes>
