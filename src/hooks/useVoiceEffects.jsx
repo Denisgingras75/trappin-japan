@@ -189,7 +189,7 @@ function createStudioChain(ctx, source) {
 
   // Plate reverb
   const convolver = ctx.createConvolver()
-  const reverbTime = 1.4
+  const reverbTime = 0.9
   const sr = ctx.sampleRate
   const len = sr * reverbTime
   const impulse = ctx.createBuffer(2, len, sr)
@@ -226,15 +226,15 @@ function createStudioChain(ctx, source) {
   reverbLpf.frequency.value = 6000
 
   const dryGain = ctx.createGain()
-  dryGain.gain.value = 0.72
+  dryGain.gain.value = 0.82
   const wetGain = ctx.createGain()
-  wetGain.gain.value = 0.28
+  wetGain.gain.value = 0.18
 
   // Slapback delay
   const slap = ctx.createDelay()
   slap.delayTime.value = 0.085
   const slapGain = ctx.createGain()
-  slapGain.gain.value = 0.15
+  slapGain.gain.value = 0.10
   const slapFilter = ctx.createBiquadFilter()
   slapFilter.type = 'lowpass'
   slapFilter.frequency.value = 3500
@@ -242,7 +242,7 @@ function createStudioChain(ctx, source) {
   const slap2 = ctx.createDelay()
   slap2.delayTime.value = 0.13
   const slapGain2 = ctx.createGain()
-  slapGain2.gain.value = 0.08
+  slapGain2.gain.value = 0.05
   const slapFilter2 = ctx.createBiquadFilter()
   slapFilter2.type = 'lowpass'
   slapFilter2.frequency.value = 2500

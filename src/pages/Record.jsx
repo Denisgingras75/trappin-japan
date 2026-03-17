@@ -153,8 +153,8 @@ export default function Record() {
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
 
-      {/* Settings — only show before recording */}
-      {!recording && !audioBlob && (
+      {/* Settings — always visible when not actively recording */}
+      {!recording && (
         <div className="record-settings">
           {/* Heat length */}
           <div className="setting-group">

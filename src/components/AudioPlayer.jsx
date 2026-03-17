@@ -39,6 +39,13 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
     }
   }, [src])
 
+  // Set beat volume lower so voice cuts through
+  useEffect(() => {
+    if (beatRef.current) {
+      beatRef.current.volume = 0.55
+    }
+  }, [beatSrc])
+
   const toggle = () => {
     const audio = audioRef.current
     if (!audio) return
@@ -46,10 +53,20 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
       audio.pause()
       if (beatRef.current) beatRef.current.pause()
     } else {
-      audio.play()
+      // Start both from same point for tight sync
       if (beatRef.current) {
-        beatRef.current.currentTime = audio.currentTime
-        beatRef.current.play()
+        const beatDur = beatRef.current.duration || 1
+        beatRef.current.currentTime = audio.currentTime % beatDur
+      }
+      const playPromise = audio.play()
+      if (beatRef.current) {
+        if (playPromise) {
+          playPromise.then(() => {
+            if (beatRef.current) beatRef.current.play()
+          })
+        } else {
+          beatRef.current.play()
+        }
       }
     }
     setPlaying(!playing)
@@ -61,7 +78,6 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
     const pct = (e.clientX - rect.left) / rect.width
     audio.currentTime = pct * audio.duration
     if (beatRef.current) {
-      // Beat loops — seek within beat duration
       const beatDur = beatRef.current.duration || 1
       beatRef.current.currentTime = (pct * audio.duration) % beatDur
     }
