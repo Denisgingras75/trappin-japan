@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useRecorder } from '../hooks/useRecorder'
+import { useAuth } from '../hooks/useAuth'
 import AudioPlayer from '../components/AudioPlayer'
 
 const HEAT_LENGTHS = [60, 90, 120, 180]
@@ -18,6 +19,7 @@ export default function Record() {
   const battleId = location.state?.battleId
   const roundNumber = location.state?.roundNumber
 
+  const { user } = useAuth()
   const {
     recording, audioBlob, duration, timeRemaining, transcript,
     start, stop, reset, cleanup, toggleMonitor
@@ -34,6 +36,9 @@ export default function Record() {
   const [targets, setTargets] = useState([])
   const [participants, setParticipants] = useState([])
   const beatAudioRef = useRef(null)
+  const blobUrl = useMemo(() => {
+    return audioBlob ? URL.createObjectURL(audioBlob) : null
+  }, [audioBlob])
 
   // Cleanup on page leave
   useEffect(() => {
@@ -76,7 +81,7 @@ export default function Record() {
       stop(beatAudioRef.current)
     } else {
       if (headphones) setMonitoring(true)
-      await start(beatAudioRef.current, { preset, heatLength })
+      await start(beatAudioRef.current, { preset, heatLength, headphones })
       if (headphones) toggleMonitor(true)
     }
   }
@@ -333,7 +338,7 @@ export default function Record() {
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="card">
             <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle ({preset} FX)</div>
-            <AudioPlayer src={URL.createObjectURL(audioBlob)} beatSrc={selectedBeat.audio_url} />
+            <AudioPlayer src={blobUrl} beatSrc={selectedBeat.audio_url} />
           </div>
 
           {/* Transcript */}
@@ -357,7 +362,7 @@ export default function Record() {
               <div className="beat-meta" style={{ marginBottom: 8 }}>Who you dissing?</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {participants
-                  .filter(p => p.user_id !== (supabase.auth.getUser && null))
+                  .filter(p => p.user_id !== user?.id)
                   .map(p => (
                     <button
                       key={p.user_id}

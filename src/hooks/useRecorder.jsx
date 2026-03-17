@@ -18,10 +18,14 @@ export function useRecorder() {
   const recognitionRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90 } = {}) => {
+  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90, headphones = false } = {}) => {
+    // Guard against double-start
+    if (mediaRecorder.current?.state === 'recording') return
+
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false,
+        // Echo cancellation ON for speakers (reduces beat bleed), OFF for headphones
+        echoCancellation: !headphones,
         noiseSuppression: false,
         autoGainControl: false,
         sampleRate: { ideal: 48000 },
@@ -33,7 +37,6 @@ export function useRecorder() {
     const audioCtx = new AudioContext({ sampleRate: 48000 })
     audioCtxRef.current = audioCtx
 
-    // Voice → effects chain (preset-aware)
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
 
@@ -48,8 +51,7 @@ export function useRecorder() {
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
 
-    // Beat plays via native <audio> element — NO AudioContext routing
-    // This avoids orphaning the element when AudioContext closes
+    // Beat plays via native <audio> — no AudioContext routing
     if (beatAudioElement) {
       beatAudioElement.currentTime = 0
       beatAudioElement.loop = true
@@ -76,7 +78,8 @@ export function useRecorder() {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
       stopTranscription()
-      cleanup()
+      // Defer cleanup so blob flush completes (Safari/iOS needs this)
+      setTimeout(() => cleanup(), 150)
     }
 
     mediaRecorder.current = recorder

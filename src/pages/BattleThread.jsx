@@ -83,7 +83,7 @@ export default function BattleThread() {
         const isMine = round.user_id === user?.id
         const targets = round.targets || []
         const targetNames = targets.length > 0
-          ? participants.filter(p => targets.includes(p.user_id)).map(() => 'someone')
+          ? participants.filter(p => targets.includes(p.user_id)).map(p => p.user_id.slice(0, 6))
           : []
 
         return (

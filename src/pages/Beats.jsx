@@ -25,17 +25,24 @@ export default function Beats() {
   const [urlTitle, setUrlTitle] = useState('')
   const [ytUrl, setYtUrl] = useState('')
   const [ytStatus, setYtStatus] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const fileRef = useRef(null)
   const navigate = useNavigate()
 
-  useEffect(() => { loadBeats() }, [tab, category, search])
+  // Debounce search — 300ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  useEffect(() => { loadBeats() }, [tab, category, debouncedSearch])
 
   async function loadBeats() {
     let query = supabase.from('beats').select('*').order('created_at', { ascending: false })
     if (tab === 'curated') query = query.eq('is_curated', true)
     if (tab === 'mine') query = query.eq('uploaded_by', (await supabase.auth.getUser()).data.user?.id)
     if (category !== 'all') query = query.eq('category', category)
-    if (search.trim()) query = query.ilike('title', `%${search.trim()}%`)
+    if (debouncedSearch.trim()) query = query.ilike('title', `%${debouncedSearch.trim()}%`)
     const { data } = await query
     setBeats(data || [])
   }
