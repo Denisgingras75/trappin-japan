@@ -5,6 +5,7 @@ export function useRecorder() {
   const [recording, setRecording] = useState(false)
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
+  const [beatInMix, setBeatInMix] = useState(false)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const timerRef = useRef(null)
@@ -59,10 +60,12 @@ export function useRecorder() {
 
         beatAudioElement.currentTime = 0
         beatAudioElement.play()
+        setBeatInMix(true)
       } catch (e) {
-        // Already connected to a context — just play
+        // Already connected to a context — just play (beat won't be in recording)
         beatAudioElement.currentTime = 0
         beatAudioElement.play()
+        setBeatInMix(false)
       }
     }
 
@@ -76,7 +79,7 @@ export function useRecorder() {
 
     const recorder = new MediaRecorder(dest.stream, {
       mimeType,
-      audioBitsPerSecond: 128000
+      audioBitsPerSecond: 256000
     })
     chunks.current = []
 
@@ -118,5 +121,5 @@ export function useRecorder() {
     setDuration(0)
   }, [])
 
-  return { recording, audioBlob, duration, start, stop, reset }
+  return { recording, audioBlob, duration, beatInMix, start, stop, reset }
 }

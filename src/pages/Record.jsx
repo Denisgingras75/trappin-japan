@@ -11,7 +11,7 @@ export default function Record() {
   const battleId = location.state?.battleId
   const roundNumber = location.state?.roundNumber
 
-  const { recording, audioBlob, duration, start, stop, reset } = useRecorder()
+  const { recording, audioBlob, duration, beatInMix, start, stop, reset } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [shareCode, setShareCode] = useState(null)
   const [selectedBeat, setSelectedBeat] = useState(beat)
@@ -114,7 +114,18 @@ export default function Record() {
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
-      <div className="fx-badge">Studio FX Active</div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        <div className="fx-badge">Studio FX Active</div>
+        {recording && (
+          <div className="fx-badge" style={beatInMix ? {} : {
+            background: 'rgba(255,23,68,0.1)',
+            borderColor: 'rgba(255,23,68,0.2)',
+            color: 'var(--color-red)'
+          }}>
+            {beatInMix ? 'Beat in Mix' : 'Voice Only'}
+          </div>
+        )}
+      </div>
 
       {recording && (
         <div className="viz-bars">
