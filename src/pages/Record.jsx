@@ -11,8 +11,9 @@ export default function Record() {
   const battleId = location.state?.battleId
   const roundNumber = location.state?.roundNumber
 
-  const { recording, audioBlob, duration, beatInMix, start, stop, reset } = useRecorder()
+  const { recording, audioBlob, duration, beatInMix, start, stop, reset, toggleMonitor } = useRecorder()
   const [saving, setSaving] = useState(false)
+  const [monitoring, setMonitoring] = useState(false)
   const [shareCode, setShareCode] = useState(null)
   const [selectedBeat, setSelectedBeat] = useState(beat)
   const [beats, setBeats] = useState([])
@@ -116,15 +117,30 @@ export default function Record() {
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <div className="fx-badge">Studio FX Active</div>
-        {recording && (
-          <div className="fx-badge" style={beatInMix ? {} : {
+        {recording && beatInMix && <div className="fx-badge">Beat in Mix</div>}
+        {recording && !beatInMix && (
+          <div className="fx-badge" style={{
             background: 'rgba(255,23,68,0.1)',
             borderColor: 'rgba(255,23,68,0.2)',
             color: 'var(--color-red)'
-          }}>
-            {beatInMix ? 'Beat in Mix' : 'Voice Only'}
-          </div>
+          }}>Voice Only</div>
         )}
+        <button
+          className="fx-badge"
+          onClick={() => {
+            const next = !monitoring
+            setMonitoring(next)
+            toggleMonitor(next)
+          }}
+          style={{
+            cursor: 'pointer',
+            background: monitoring ? 'rgba(0,230,118,0.1)' : 'rgba(107,107,128,0.1)',
+            borderColor: monitoring ? 'rgba(0,230,118,0.2)' : 'rgba(107,107,128,0.2)',
+            color: monitoring ? 'var(--color-green)' : 'var(--color-text-muted)'
+          }}
+        >
+          {monitoring ? 'Monitor ON' : 'Monitor OFF'}
+        </button>
       </div>
 
       {recording && (

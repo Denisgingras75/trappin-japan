@@ -12,6 +12,7 @@ export function useRecorder() {
   const startTimeRef = useRef(null)
   const audioCtxRef = useRef(null)
   const beatSourceRef = useRef(null)
+  const monitorRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const start = useCallback(async (beatAudioElement) => {
@@ -41,12 +42,13 @@ export function useRecorder() {
     // Connect processed voice to recording mix
     effectsOutput.connect(dest)
 
-    // Live monitoring — user hears their processed voice in headphones
-    // Uses a small gain to prevent any feedback if not on headphones
+    // Live monitoring — OFF by default to prevent feedback on speakers
+    // Only enable if user toggles it (for headphone use)
     const monitorGain = audioCtx.createGain()
-    monitorGain.gain.value = 0.85
+    monitorGain.gain.value = 0
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
+    monitorRef.current = monitorGain
 
     // If beat element provided, route it through AudioContext
     if (beatAudioElement) {
@@ -121,5 +123,11 @@ export function useRecorder() {
     setDuration(0)
   }, [])
 
-  return { recording, audioBlob, duration, beatInMix, start, stop, reset }
+  const toggleMonitor = useCallback((on) => {
+    if (monitorRef.current) {
+      monitorRef.current.gain.value = on ? 0.8 : 0
+    }
+  }, [])
+
+  return { recording, audioBlob, duration, beatInMix, start, stop, reset, toggleMonitor }
 }
