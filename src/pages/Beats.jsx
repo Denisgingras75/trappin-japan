@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import AudioPlayer from '../components/AudioPlayer'
-import YouTubePlayer from '../components/YouTubePlayer'
 
 const CATEGORIES = [
   { key: 'all', label: 'All' },
@@ -262,9 +261,7 @@ export default function Beats() {
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            {beat.audio_url.startsWith('youtube:')
-              ? <YouTubePlayer videoId={beat.audio_url.replace('youtube:', '')} small />
-              : <AudioPlayer src={beat.audio_url} />}
+            <AudioPlayer src={beat.audio_url} />
           </div>
         </div>
       ))}

@@ -13,17 +13,21 @@ export function useRecorder() {
   const beatSourceRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  // Start recording with beat playing and mixed into output
   const start = useCallback(async (beatAudioElement) => {
+    // Request raw mic — disable ALL browser processing for best quality
+    // These algorithms (noise suppression, AGC, echo cancel) destroy vocal tone
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false, // off — we don't want it killing the beat bleed
-        noiseSuppression: true,
-        autoGainControl: true
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        // Request high quality if available
+        sampleRate: { ideal: 48000 },
+        channelCount: { ideal: 1 }
       }
     })
 
-    const audioCtx = new AudioContext()
+    const audioCtx = new AudioContext({ sampleRate: 48000 })
     audioCtxRef.current = audioCtx
 
     // Voice → effects chain
@@ -33,32 +37,47 @@ export function useRecorder() {
     // Mix destination for final recording (beat + processed voice)
     const dest = audioCtx.createMediaStreamDestination()
 
-    // Connect processed voice to mix
+    // Connect processed voice to recording mix
     effectsOutput.connect(dest)
 
-    // Also let the user hear themselves (monitor through speakers)
-    // effectsOutput.connect(audioCtx.destination) // uncomment to hear yourself live
+    // Live monitoring — user hears their processed voice in headphones
+    // Uses a small gain to prevent any feedback if not on headphones
+    const monitorGain = audioCtx.createGain()
+    monitorGain.gain.value = 0.85
+    effectsOutput.connect(monitorGain)
+    monitorGain.connect(audioCtx.destination)
 
-    // If beat element provided, route it through AudioContext too
+    // If beat element provided, route it through AudioContext
     if (beatAudioElement) {
       try {
         const beatSource = audioCtx.createMediaElementSource(beatAudioElement)
         beatSourceRef.current = beatSource
 
-        // Beat goes to both speakers (so user hears it) and recording mix
+        // Beat goes to speakers (user hears it) AND recording mix
         beatSource.connect(audioCtx.destination)
         beatSource.connect(dest)
 
         beatAudioElement.currentTime = 0
         beatAudioElement.play()
       } catch (e) {
-        // If already connected to a context, just play it normally
+        // Already connected to a context — just play
         beatAudioElement.currentTime = 0
         beatAudioElement.play()
       }
     }
 
-    const recorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' })
+    // Use highest quality codec available
+    let mimeType = 'audio/webm;codecs=opus'
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      mimeType = 'audio/webm;codecs=opus'
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      mimeType = 'audio/mp4'
+    }
+
+    const recorder = new MediaRecorder(dest.stream, {
+      mimeType,
+      audioBitsPerSecond: 128000
+    })
     chunks.current = []
 
     recorder.ondataavailable = (e) => {
@@ -66,7 +85,7 @@ export function useRecorder() {
     }
 
     recorder.onstop = () => {
-      const blob = new Blob(chunks.current, { type: 'audio/webm' })
+      const blob = new Blob(chunks.current, { type: mimeType })
       setAudioBlob(blob)
       stream.getTracks().forEach(t => t.stop())
       audioCtx.close()

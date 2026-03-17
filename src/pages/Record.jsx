@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useRecorder } from '../hooks/useRecorder'
 import AudioPlayer from '../components/AudioPlayer'
-import YouTubePlayer from '../components/YouTubePlayer'
 
 export default function Record() {
   const location = useLocation()
@@ -33,28 +32,10 @@ export default function Record() {
   }
 
   const handleRecord = async () => {
-    const isYoutube = selectedBeat?.audio_url.startsWith('youtube:')
     if (recording) {
-      stop(isYoutube ? null : beatAudioRef.current)
+      stop(beatAudioRef.current)
     } else {
-      // For YouTube beats, just record voice (can't capture iframe audio)
-      // For hosted beats, mix beat + voice into recording
-      await start(isYoutube ? null : beatAudioRef.current)
-    }
-  }
-
-  const handleShare = async (code) => {
-    const url = `${window.location.origin}/battle/${code}`
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Freestyle Challenge',
-          text: 'I just dropped a freestyle. Think you can do better?',
-          url
-        })
-      } catch (e) {
-        // user cancelled share — fall through to copy
-      }
+      await start(beatAudioRef.current)
     }
   }
 
@@ -127,18 +108,7 @@ export default function Record() {
 
   return (
     <div className="record-page">
-      {selectedBeat && !selectedBeat.audio_url.startsWith('youtube:') && (
-        <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" crossOrigin="anonymous" />
-      )}
-
-      {selectedBeat?.audio_url.startsWith('youtube:') && (
-        <div style={{ width: '100%', marginBottom: -8 }}>
-          <YouTubePlayer videoId={selectedBeat.audio_url.replace('youtube:', '')} />
-          <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
-            Play the video, then hit record
-          </div>
-        </div>
-      )}
+      <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" crossOrigin="anonymous" />
 
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
