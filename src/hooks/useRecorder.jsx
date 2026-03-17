@@ -20,9 +20,9 @@ export function useRecorder() {
     // These algorithms (noise suppression, AGC, echo cancel) destroy vocal tone
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        echoCancellation: true,   // cancels beat bleed from speakers into mic
+        noiseSuppression: false,  // off — kills vocal tone
+        autoGainControl: false,   // off — causes pumping
         // Request high quality if available
         sampleRate: { ideal: 48000 },
         channelCount: { ideal: 1 }
