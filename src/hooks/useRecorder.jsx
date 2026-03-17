@@ -13,8 +13,6 @@ export function useRecorder() {
   const countdownRef = useRef(null)
   const startTimeRef = useRef(null)
   const audioCtxRef = useRef(null)
-  const beatSourceRef = useRef(null)
-  const beatGainRef = useRef(null)
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
   const recognitionRef = useRef(null)
@@ -39,36 +37,23 @@ export function useRecorder() {
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
 
-    // Recording destination — VOICE ONLY (no beat)
+    // Recording destination — VOICE ONLY
     const dest = audioCtx.createMediaStreamDestination()
     effectsOutput.connect(dest)
 
-    // Live monitoring — OFF by default (speakers = feedback risk)
+    // Live monitoring — OFF by default
     const monitorGain = audioCtx.createGain()
     monitorGain.gain.value = 0
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
 
-    // Beat plays through speakers with volume control — NOT routed to recording
+    // Beat plays via native <audio> element — NO AudioContext routing
+    // This avoids orphaning the element when AudioContext closes
     if (beatAudioElement) {
-      try {
-        const beatSource = audioCtx.createMediaElementSource(beatAudioElement)
-        beatSourceRef.current = beatSource
-        const beatGain = audioCtx.createGain()
-        beatGain.gain.value = 0.7  // default beat volume (lower than full)
-        beatGainRef.current = beatGain
-        beatSource.connect(beatGain)
-        beatGain.connect(audioCtx.destination)
-        beatAudioElement.currentTime = 0
-        beatAudioElement.loop = true
-        beatAudioElement.play()
-      } catch (e) {
-        beatAudioElement.currentTime = 0
-        beatAudioElement.loop = true
-        beatAudioElement.volume = 0.7
-        beatAudioElement.play()
-      }
+      beatAudioElement.currentTime = 0
+      beatAudioElement.loop = true
+      beatAudioElement.play()
     }
 
     // Codec selection
@@ -103,10 +88,8 @@ export function useRecorder() {
     setTimeRemaining(heatLength)
     startTimeRef.current = Date.now()
 
-    // Start speech recognition for transcript
     startTranscription()
 
-    // Duration counter
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
       setDuration(elapsed)
@@ -114,7 +97,6 @@ export function useRecorder() {
       setTimeRemaining(remaining > 0 ? remaining : 0)
     }, 200)
 
-    // Auto-stop at heat length
     countdownRef.current = setTimeout(() => {
       if (mediaRecorder.current?.state === 'recording') {
         mediaRecorder.current.stop()
@@ -146,9 +128,8 @@ export function useRecorder() {
       setTranscript(finalText + interim)
     }
 
-    recognition.onerror = () => {} // silently ignore
+    recognition.onerror = () => {}
     recognition.onend = () => {
-      // Restart if still recording (browser cuts off after ~60s)
       if (mediaRecorder.current?.state === 'recording') {
         try { recognition.start() } catch (e) {}
       }
@@ -191,8 +172,6 @@ export function useRecorder() {
       audioCtxRef.current = null
     }
     monitorRef.current = null
-    beatSourceRef.current = null
-    beatGainRef.current = null
   }, [])
 
   const reset = useCallback(() => {
@@ -208,14 +187,8 @@ export function useRecorder() {
     }
   }, [])
 
-  const setBeatVolume = useCallback((val) => {
-    if (beatGainRef.current) {
-      beatGainRef.current.gain.value = val
-    }
-  }, [])
-
   return {
     recording, audioBlob, duration, timeRemaining, transcript,
-    start, stop, reset, cleanup, toggleMonitor, setBeatVolume
+    start, stop, reset, cleanup, toggleMonitor
   }
 }

@@ -20,7 +20,7 @@ export default function Record() {
 
   const {
     recording, audioBlob, duration, timeRemaining, transcript,
-    start, stop, reset, cleanup, toggleMonitor, setBeatVolume
+    start, stop, reset, cleanup, toggleMonitor
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
@@ -83,7 +83,7 @@ export default function Record() {
 
   const handleBeatVolume = (val) => {
     setBeatVol(val)
-    setBeatVolume(val)
+    if (beatAudioRef.current) beatAudioRef.current.volume = val
   }
 
   const toggleTarget = (userId) => {
@@ -230,8 +230,8 @@ export default function Record() {
         </div>
       )}
 
-      {/* Beat volume slider — visible during recording */}
-      {recording && (
+      {/* Beat volume slider — always visible */}
+      {selectedBeat && (
         <div className="setting-group" style={{ width: '100%', padding: '0 16px' }}>
           <div className="setting-label">Beat Vol</div>
           <input
