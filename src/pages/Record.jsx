@@ -21,7 +21,7 @@ export default function Record() {
 
   const { user } = useAuth()
   const {
-    recording, audioBlob, duration, timeRemaining, transcript,
+    recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
     start, stop, reset, cleanup, toggleMonitor
   } = useRecorder()
   const [saving, setSaving] = useState(false)
@@ -330,8 +330,9 @@ export default function Record() {
       <button
         className={`btn-record ${recording ? 'recording' : ''}`}
         onClick={handleRecord}
+        disabled={loading}
       >
-        {recording ? 'Stop' : 'Rec'}
+        {loading ? '...' : recording ? 'Stop' : 'Rec'}
       </button>
 
       {audioBlob && !recording && (

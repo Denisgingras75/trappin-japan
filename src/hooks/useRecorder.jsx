@@ -1,12 +1,14 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useVoiceEffects } from './useVoiceEffects'
 
 export function useRecorder() {
   const [recording, setRecording] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
   const [timeRemaining, setTimeRemaining] = useState(null)
   const [transcript, setTranscript] = useState('')
+  const [micReady, setMicReady] = useState(false)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const timerRef = useRef(null)
@@ -18,13 +20,39 @@ export function useRecorder() {
   const recognitionRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90, headphones = false } = {}) => {
-    // Guard against double-start
-    if (mediaRecorder.current?.state === 'recording') return
+  // Pre-warm mic on mount — get permission + activate hardware early
+  useEffect(() => {
+    let warmStream = null
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        warmStream = stream
+        setMicReady(true)
+        // Keep stream alive briefly, then release (permission is now cached)
+        setTimeout(() => {
+          stream.getTracks().forEach(t => t.stop())
+        }, 500)
+      })
+      .catch(() => {})
 
+    return () => {
+      if (warmStream) warmStream.getTracks().forEach(t => t.stop())
+    }
+  }, [])
+
+  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90, headphones = false } = {}) => {
+    if (mediaRecorder.current?.state === 'recording') return
+    setLoading(true)
+
+    // Start beat IMMEDIATELY — don't wait for mic
+    if (beatAudioElement) {
+      beatAudioElement.currentTime = 0
+      beatAudioElement.loop = true
+      beatAudioElement.play()
+    }
+
+    // Mic should be fast now (pre-warmed, permission cached)
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        // Echo cancellation ON for speakers (reduces beat bleed), OFF for headphones
         echoCancellation: !headphones,
         noiseSuppression: false,
         autoGainControl: false,
@@ -40,23 +68,14 @@ export function useRecorder() {
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
 
-    // Recording destination — VOICE ONLY
     const dest = audioCtx.createMediaStreamDestination()
     effectsOutput.connect(dest)
 
-    // Live monitoring — OFF by default
     const monitorGain = audioCtx.createGain()
     monitorGain.gain.value = 0
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
-
-    // Beat plays via native <audio> — no AudioContext routing
-    if (beatAudioElement) {
-      beatAudioElement.currentTime = 0
-      beatAudioElement.loop = true
-      beatAudioElement.play()
-    }
 
     // Codec selection
     let mimeType = 'audio/webm;codecs=opus'
@@ -78,13 +97,13 @@ export function useRecorder() {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
       stopTranscription()
-      // Defer cleanup so blob flush completes (Safari/iOS needs this)
       setTimeout(() => cleanup(), 150)
     }
 
     mediaRecorder.current = recorder
     recorder.start(100)
     setRecording(true)
+    setLoading(false)
     setAudioBlob(null)
     setDuration(0)
     setTranscript('')
@@ -191,7 +210,7 @@ export function useRecorder() {
   }, [])
 
   return {
-    recording, audioBlob, duration, timeRemaining, transcript,
+    recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
     start, stop, reset, cleanup, toggleMonitor
   }
 }
