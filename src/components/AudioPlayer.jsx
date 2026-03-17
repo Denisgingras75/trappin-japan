@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 
 export default function AudioPlayer({ src, beatSrc, accent }) {
   const [playing, setPlaying] = useState(false)
+  const [buffering, setBuffering] = useState(false)
   const [progress, setProgress] = useState(0)
   const [dur, setDur] = useState(0)
   const [cur, setCur] = useState(0)
@@ -28,14 +29,23 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
         beatRef.current.currentTime = 0
       }
     }
+    const onWaiting = () => setBuffering(true)
+    const onCanPlay = () => setBuffering(false)
+    const onPlaying = () => setBuffering(false)
 
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('loadedmetadata', onMeta)
     audio.addEventListener('ended', onEnd)
+    audio.addEventListener('waiting', onWaiting)
+    audio.addEventListener('canplay', onCanPlay)
+    audio.addEventListener('playing', onPlaying)
     return () => {
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('loadedmetadata', onMeta)
       audio.removeEventListener('ended', onEnd)
+      audio.removeEventListener('waiting', onWaiting)
+      audio.removeEventListener('canplay', onCanPlay)
+      audio.removeEventListener('playing', onPlaying)
     }
   }, [src])
 
@@ -52,28 +62,30 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
     if (playing) {
       audio.pause()
       if (beatRef.current) beatRef.current.pause()
+      setPlaying(false)
     } else {
-      // Start both from same point for tight sync
+      setPlaying(true)
+      setBuffering(true)
       if (beatRef.current) {
         const beatDur = beatRef.current.duration || 1
         beatRef.current.currentTime = audio.currentTime % beatDur
       }
       const playPromise = audio.play()
-      if (beatRef.current) {
-        if (playPromise) {
-          playPromise.then(() => {
-            if (beatRef.current) beatRef.current.play()
-          })
-        } else {
-          beatRef.current.play()
-        }
+      if (playPromise) {
+        playPromise.then(() => {
+          setBuffering(false)
+          if (beatRef.current) beatRef.current.play()
+        }).catch(() => {
+          setPlaying(false)
+          setBuffering(false)
+        })
       }
     }
-    setPlaying(!playing)
   }
 
   const seek = (e) => {
     const audio = audioRef.current
+    if (!audio || !audio.duration) return
     const rect = e.currentTarget.getBoundingClientRect()
     const pct = (e.clientX - rect.left) / rect.width
     audio.currentTime = pct * audio.duration
@@ -92,11 +104,11 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-      <audio ref={audioRef} src={src} preload="metadata" />
-      {beatSrc && <audio ref={beatRef} src={beatSrc} preload="metadata" loop />}
+      <audio ref={audioRef} src={src} preload="auto" />
+      {beatSrc && <audio ref={beatRef} src={beatSrc} preload="auto" loop />}
       <button onClick={toggle} className="play-btn"
         style={accent ? { background: 'rgba(255,255,255,0.15)', boxShadow: 'none' } : {}}>
-        {playing ? '\u275A\u275A' : '\u25B6'}
+        {buffering ? '...' : playing ? '\u275A\u275A' : '\u25B6'}
       </button>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div onClick={seek} style={{
