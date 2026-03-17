@@ -174,7 +174,7 @@ export default function Record() {
 
   return (
     <div className="record-page">
-      <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" crossOrigin="anonymous" />
+      <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" />
 
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
