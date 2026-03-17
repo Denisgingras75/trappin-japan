@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 
-export default function AudioPlayer({ src, accent }) {
+export default function AudioPlayer({ src, beatSrc, accent }) {
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
   const [dur, setDur] = useState(0)
   const [cur, setCur] = useState(0)
   const audioRef = useRef(null)
+  const beatRef = useRef(null)
 
   useEffect(() => {
     const audio = audioRef.current
@@ -18,7 +19,15 @@ export default function AudioPlayer({ src, accent }) {
       }
     }
     const onMeta = () => setDur(audio.duration || 0)
-    const onEnd = () => { setPlaying(false); setProgress(0); setCur(0) }
+    const onEnd = () => {
+      setPlaying(false)
+      setProgress(0)
+      setCur(0)
+      if (beatRef.current) {
+        beatRef.current.pause()
+        beatRef.current.currentTime = 0
+      }
+    }
 
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('loadedmetadata', onMeta)
@@ -33,8 +42,16 @@ export default function AudioPlayer({ src, accent }) {
   const toggle = () => {
     const audio = audioRef.current
     if (!audio) return
-    if (playing) audio.pause()
-    else audio.play()
+    if (playing) {
+      audio.pause()
+      if (beatRef.current) beatRef.current.pause()
+    } else {
+      audio.play()
+      if (beatRef.current) {
+        beatRef.current.currentTime = audio.currentTime
+        beatRef.current.play()
+      }
+    }
     setPlaying(!playing)
   }
 
@@ -43,6 +60,11 @@ export default function AudioPlayer({ src, accent }) {
     const rect = e.currentTarget.getBoundingClientRect()
     const pct = (e.clientX - rect.left) / rect.width
     audio.currentTime = pct * audio.duration
+    if (beatRef.current) {
+      // Beat loops — seek within beat duration
+      const beatDur = beatRef.current.duration || 1
+      beatRef.current.currentTime = (pct * audio.duration) % beatDur
+    }
   }
 
   const fmt = (s) => {
@@ -55,6 +77,7 @@ export default function AudioPlayer({ src, accent }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
       <audio ref={audioRef} src={src} preload="metadata" />
+      {beatSrc && <audio ref={beatRef} src={beatSrc} preload="metadata" loop />}
       <button onClick={toggle} className="play-btn"
         style={accent ? { background: 'rgba(255,255,255,0.15)', boxShadow: 'none' } : {}}>
         {playing ? '\u275A\u275A' : '\u25B6'}

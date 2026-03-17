@@ -4,6 +4,13 @@ import { supabase } from '../lib/supabase'
 import { useRecorder } from '../hooks/useRecorder'
 import AudioPlayer from '../components/AudioPlayer'
 
+const HEAT_LENGTHS = [60, 90, 120, 180]
+const FX_PRESETS = [
+  { key: 'raw', label: 'Raw', desc: 'No processing' },
+  { key: 'clean', label: 'Clean', desc: 'Polish + clarity' },
+  { key: 'studio', label: 'Studio', desc: 'Full production' }
+]
+
 export default function Record() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -11,13 +18,27 @@ export default function Record() {
   const battleId = location.state?.battleId
   const roundNumber = location.state?.roundNumber
 
-  const { recording, audioBlob, duration, beatInMix, start, stop, reset, toggleMonitor } = useRecorder()
+  const { recording, audioBlob, duration, timeRemaining, start, stop, reset, cleanup, toggleMonitor } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
+  const [headphones, setHeadphones] = useState(false)
   const [shareCode, setShareCode] = useState(null)
   const [selectedBeat, setSelectedBeat] = useState(beat)
   const [beats, setBeats] = useState([])
+  const [heatLength, setHeatLength] = useState(90)
+  const [preset, setPreset] = useState('studio')
   const beatAudioRef = useRef(null)
+
+  // Cleanup on page leave — stop recording, release mic, stop beat
+  useEffect(() => {
+    return () => {
+      cleanup()
+      if (beatAudioRef.current) {
+        beatAudioRef.current.pause()
+        beatAudioRef.current.currentTime = 0
+      }
+    }
+  }, [cleanup])
 
   useEffect(() => {
     if (!selectedBeat) {
@@ -26,7 +47,8 @@ export default function Record() {
     }
   }, [selectedBeat])
 
-  const formatDuration = (s) => {
+  const formatTime = (s) => {
+    if (s == null) return '--:--'
     const m = Math.floor(s / 60)
     const sec = s % 60
     return `${m}:${sec.toString().padStart(2, '0')}`
@@ -36,7 +58,15 @@ export default function Record() {
     if (recording) {
       stop(beatAudioRef.current)
     } else {
-      await start(beatAudioRef.current)
+      // Enable monitoring by default in headphone mode
+      if (headphones) {
+        setMonitoring(true)
+      }
+      await start(beatAudioRef.current, { preset, heatLength })
+      // Set monitor after start if headphones
+      if (headphones) {
+        toggleMonitor(true)
+      }
     }
   }
 
@@ -72,6 +102,13 @@ export default function Record() {
         share_code: code,
         status: 'open'
       }).select().single()
+
+      // Add creator to battle_participants
+      await supabase.from('battle_participants').insert({
+        battle_id: battle.id,
+        user_id: user.id,
+        role: 'creator'
+      })
 
       await supabase.from('freestyles').insert({
         battle_id: battle.id,
@@ -115,32 +152,92 @@ export default function Record() {
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
+
+      {/* Settings — only show before recording */}
+      {!recording && !audioBlob && (
+        <div className="record-settings">
+          {/* Heat length */}
+          <div className="setting-group">
+            <div className="setting-label">Heat</div>
+            <div className="setting-options">
+              {HEAT_LENGTHS.map(len => (
+                <button
+                  key={len}
+                  className={`setting-btn ${heatLength === len ? 'active' : ''}`}
+                  onClick={() => setHeatLength(len)}
+                >
+                  {len}s
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* FX preset */}
+          <div className="setting-group">
+            <div className="setting-label">Voice FX</div>
+            <div className="setting-options">
+              {FX_PRESETS.map(p => (
+                <button
+                  key={p.key}
+                  className={`setting-btn ${preset === p.key ? 'active' : ''}`}
+                  onClick={() => setPreset(p.key)}
+                  title={p.desc}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Audio mode */}
+          <div className="setting-group">
+            <div className="setting-label">Mode</div>
+            <div className="setting-options">
+              <button
+                className={`setting-btn ${!headphones ? 'active' : ''}`}
+                onClick={() => { setHeadphones(false); setMonitoring(false) }}
+              >
+                Speakers
+              </button>
+              <button
+                className={`setting-btn ${headphones ? 'active' : ''}`}
+                onClick={() => setHeadphones(true)}
+              >
+                Headphones
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active recording badges */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <div className="fx-badge">Studio FX Active</div>
-        {recording && beatInMix && <div className="fx-badge">Beat in Mix</div>}
-        {recording && !beatInMix && (
-          <div className="fx-badge" style={{
-            background: 'rgba(255,23,68,0.1)',
-            borderColor: 'rgba(255,23,68,0.2)',
-            color: 'var(--color-red)'
-          }}>Voice Only</div>
+        <div className="fx-badge">{preset === 'raw' ? 'Raw' : preset === 'clean' ? 'Clean FX' : 'Studio FX'}</div>
+        <div className="fx-badge" style={{
+          background: 'rgba(0,240,255,0.1)',
+          borderColor: 'rgba(0,240,255,0.2)',
+          color: 'var(--color-neon-cyan)'
+        }}>
+          {headphones ? 'Headphones' : 'Speakers'}
+        </div>
+        {recording && (
+          <button
+            className="fx-badge"
+            onClick={() => {
+              const next = !monitoring
+              setMonitoring(next)
+              toggleMonitor(next)
+            }}
+            style={{
+              cursor: 'pointer',
+              background: monitoring ? 'rgba(0,230,118,0.1)' : 'rgba(107,107,128,0.1)',
+              borderColor: monitoring ? 'rgba(0,230,118,0.2)' : 'rgba(107,107,128,0.2)',
+              color: monitoring ? 'var(--color-green)' : 'var(--color-text-muted)'
+            }}
+          >
+            {monitoring ? 'Monitor ON' : 'Monitor OFF'}
+          </button>
         )}
-        <button
-          className="fx-badge"
-          onClick={() => {
-            const next = !monitoring
-            setMonitoring(next)
-            toggleMonitor(next)
-          }}
-          style={{
-            cursor: 'pointer',
-            background: monitoring ? 'rgba(0,230,118,0.1)' : 'rgba(107,107,128,0.1)',
-            borderColor: monitoring ? 'rgba(0,230,118,0.2)' : 'rgba(107,107,128,0.2)',
-            color: monitoring ? 'var(--color-green)' : 'var(--color-text-muted)'
-          }}
-        >
-          {monitoring ? 'Monitor ON' : 'Monitor OFF'}
-        </button>
       </div>
 
       {recording && (
@@ -149,7 +246,19 @@ export default function Record() {
         </div>
       )}
 
-      <div className="record-timer">{formatDuration(duration)}</div>
+      {/* Timer: shows elapsed / remaining */}
+      <div className="record-timer">{formatTime(duration)}</div>
+      {recording && timeRemaining != null && (
+        <div style={{
+          fontSize: '0.75rem',
+          color: timeRemaining <= 10 ? 'var(--color-red)' : 'var(--color-text-muted)',
+          fontFamily: 'var(--font-mono)',
+          marginTop: -12,
+          transition: 'color 0.3s'
+        }}>
+          {formatTime(timeRemaining)} remaining
+        </div>
+      )}
 
       <button
         className={`btn-record ${recording ? 'recording' : ''}`}
@@ -161,8 +270,8 @@ export default function Record() {
       {audioBlob && !recording && (
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="card">
-            <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle (with effects)</div>
-            <AudioPlayer src={URL.createObjectURL(audioBlob)} />
+            <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle ({preset} FX)</div>
+            <AudioPlayer src={URL.createObjectURL(audioBlob)} beatSrc={selectedBeat.audio_url} />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary btn-full" onClick={reset}>Redo</button>

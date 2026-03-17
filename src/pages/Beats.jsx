@@ -16,6 +16,7 @@ export default function Beats() {
   const [beats, setBeats] = useState([])
   const [tab, setTab] = useState('curated')
   const [category, setCategory] = useState('all')
+  const [search, setSearch] = useState('')
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -27,13 +28,14 @@ export default function Beats() {
   const fileRef = useRef(null)
   const navigate = useNavigate()
 
-  useEffect(() => { loadBeats() }, [tab, category])
+  useEffect(() => { loadBeats() }, [tab, category, search])
 
   async function loadBeats() {
     let query = supabase.from('beats').select('*').order('created_at', { ascending: false })
     if (tab === 'curated') query = query.eq('is_curated', true)
     if (tab === 'mine') query = query.eq('uploaded_by', (await supabase.auth.getUser()).data.user?.id)
     if (category !== 'all') query = query.eq('category', category)
+    if (search.trim()) query = query.ilike('title', `%${search.trim()}%`)
     const { data } = await query
     setBeats(data || [])
   }
@@ -155,6 +157,21 @@ export default function Beats() {
         </button>
       </div>
 
+      {/* Search bar */}
+      <div style={{ marginBottom: 12 }}>
+        <input
+          type="text"
+          placeholder="Search beats..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            ...inputStyle,
+            borderColor: search ? 'var(--color-neon-cyan)' : 'var(--color-border)',
+            transition: 'border-color 0.2s'
+          }}
+        />
+      </div>
+
       {showAdd && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="tabs" style={{ marginBottom: 12 }}>
@@ -240,7 +257,8 @@ export default function Beats() {
 
       {beats.length === 0 && (
         <div className="empty">
-          {tab === 'mine' ? 'Drop a file, paste a URL, or rip from YouTube'
+          {search ? `No beats matching "${search}"`
+            : tab === 'mine' ? 'Drop a file, paste a URL, or rip from YouTube'
             : tab === 'curated' ? 'No beats in this category'
             : 'No community beats yet'}
         </div>
@@ -253,6 +271,8 @@ export default function Beats() {
               <div className="beat-title">{beat.title}</div>
               <div className="beat-meta">
                 {beat.is_curated ? beat.category || 'Curated' : 'Community'}
+                {beat.bpm && ` · ${beat.bpm} BPM`}
+                {beat.mood && ` · ${beat.mood}`}
               </div>
             </div>
             <button className="btn btn-primary" onClick={() => navigate('/record', { state: { beat } })}

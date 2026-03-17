@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -13,6 +13,7 @@ export default function Challenge() {
   const [beat, setBeat] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [participantCount, setParticipantCount] = useState(0)
 
   useEffect(() => {
     loadChallenge()
@@ -21,12 +22,13 @@ export default function Challenge() {
   async function loadChallenge() {
     const { data: b } = await supabase
       .from('battles')
-      .select('*, beats(*)')
+      .select('*, beats(*), battle_participants(user_id)')
       .eq('share_code', code)
       .single()
     if (!b) { setNotFound(true); return }
     setBattle(b)
     setBeat(b.beats)
+    setParticipantCount(b.battle_participants?.length || 1)
 
     const { data: f } = await supabase
       .from('freestyles')
@@ -41,10 +43,20 @@ export default function Challenge() {
   async function acceptChallenge() {
     if (!user) { signIn(); return }
 
-    await supabase
-      .from('battles')
-      .update({ opponent_id: user.id, status: 'active' })
-      .eq('id', battle.id)
+    // Join as participant
+    await supabase.from('battle_participants').insert({
+      battle_id: battle.id,
+      user_id: user.id,
+      role: 'participant'
+    })
+
+    // Update battle status if still open
+    if (battle.status === 'open') {
+      await supabase
+        .from('battles')
+        .update({ opponent_id: user.id, status: 'active' })
+        .eq('id', battle.id)
+    }
 
     navigate('/record', {
       state: { beat, battleId: battle.id, roundNumber: (freestyle?.round_number || 1) + 1 }
@@ -88,6 +100,12 @@ export default function Challenge() {
         Someone dropped a freestyle and thinks you can't match it. Prove them wrong.
       </p>
 
+      {participantCount > 2 && (
+        <div className="badge badge-active" style={{ fontSize: '0.7rem' }}>
+          {participantCount} people in this battle
+        </div>
+      )}
+
       <div className="card" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
@@ -96,7 +114,7 @@ export default function Challenge() {
           </div>
           <span className="badge badge-open">Listen First</span>
         </div>
-        {freestyle && <AudioPlayer src={freestyle.audio_url} />}
+        {freestyle && <AudioPlayer src={freestyle.audio_url} beatSrc={beat?.audio_url} />}
       </div>
 
       <button className="btn btn-primary btn-full" onClick={acceptChallenge} style={{ maxWidth: 400 }}>

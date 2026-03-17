@@ -5,84 +5,75 @@ export function useRecorder() {
   const [recording, setRecording] = useState(false)
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
-  const [beatInMix, setBeatInMix] = useState(false)
+  const [timeRemaining, setTimeRemaining] = useState(null)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const timerRef = useRef(null)
+  const countdownRef = useRef(null)
   const startTimeRef = useRef(null)
   const audioCtxRef = useRef(null)
   const beatSourceRef = useRef(null)
   const monitorRef = useRef(null)
+  const streamRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  const start = useCallback(async (beatAudioElement) => {
-    // Request raw mic — disable ALL browser processing for best quality
-    // These algorithms (noise suppression, AGC, echo cancel) destroy vocal tone
+  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90 } = {}) => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: true,   // cancels beat bleed from speakers into mic
-        noiseSuppression: false,  // off — kills vocal tone
-        autoGainControl: false,   // off — causes pumping
-        // Request high quality if available
+        echoCancellation: false,  // off — we no longer record beat through mic
+        noiseSuppression: false,
+        autoGainControl: false,
         sampleRate: { ideal: 48000 },
         channelCount: { ideal: 1 }
       }
     })
+    streamRef.current = stream
 
     const audioCtx = new AudioContext({ sampleRate: 48000 })
     audioCtxRef.current = audioCtx
 
-    // Voice → effects chain
+    // Voice → effects chain (preset-aware)
     const micSource = audioCtx.createMediaStreamSource(stream)
-    const effectsOutput = createChain(audioCtx, micSource)
+    const effectsOutput = createChain(audioCtx, micSource, preset)
 
-    // Mix destination for final recording (beat + processed voice)
+    // Recording destination — VOICE ONLY (no beat)
     const dest = audioCtx.createMediaStreamDestination()
-
-    // Connect processed voice to recording mix
     effectsOutput.connect(dest)
 
-    // Live monitoring — OFF by default to prevent feedback on speakers
-    // Only enable if user toggles it (for headphone use)
+    // Live monitoring — OFF by default (speakers = feedback risk)
     const monitorGain = audioCtx.createGain()
     monitorGain.gain.value = 0
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
 
-    // If beat element provided, route it through AudioContext
+    // Beat plays through speakers ONLY — NOT routed to recording
     if (beatAudioElement) {
       try {
         const beatSource = audioCtx.createMediaElementSource(beatAudioElement)
         beatSourceRef.current = beatSource
-
-        // Beat goes to speakers (user hears it) AND recording mix
         beatSource.connect(audioCtx.destination)
-        beatSource.connect(dest)
-
         beatAudioElement.currentTime = 0
+        beatAudioElement.loop = true
         beatAudioElement.play()
-        setBeatInMix(true)
       } catch (e) {
-        // Already connected to a context — just play (beat won't be in recording)
+        // Already connected — just play
         beatAudioElement.currentTime = 0
+        beatAudioElement.loop = true
         beatAudioElement.play()
-        setBeatInMix(false)
       }
     }
 
-    // Use highest quality codec available
+    // Codec selection
     let mimeType = 'audio/webm;codecs=opus'
-    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-      mimeType = 'audio/webm;codecs=opus'
-    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-      mimeType = 'audio/mp4'
+    if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
     }
 
-    const recorder = new MediaRecorder(dest.stream, {
-      mimeType,
-      audioBitsPerSecond: 256000
-    })
+    const recorderOpts = { audioBitsPerSecond: 256000 }
+    if (mimeType) recorderOpts.mimeType = mimeType
+
+    const recorder = new MediaRecorder(dest.stream, recorderOpts)
     chunks.current = []
 
     recorder.ondataavailable = (e) => {
@@ -90,11 +81,9 @@ export function useRecorder() {
     }
 
     recorder.onstop = () => {
-      const blob = new Blob(chunks.current, { type: mimeType })
+      const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
-      stream.getTracks().forEach(t => t.stop())
-      audioCtx.close()
-      clearInterval(timerRef.current)
+      cleanup()
     }
 
     mediaRecorder.current = recorder
@@ -102,25 +91,58 @@ export function useRecorder() {
     setRecording(true)
     setAudioBlob(null)
     setDuration(0)
+    setTimeRemaining(heatLength)
     startTimeRef.current = Date.now()
+
+    // Duration counter
     timerRef.current = setInterval(() => {
-      setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000))
+      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
+      setDuration(elapsed)
+      const remaining = heatLength - elapsed
+      setTimeRemaining(remaining > 0 ? remaining : 0)
     }, 200)
+
+    // Auto-stop at heat length
+    countdownRef.current = setTimeout(() => {
+      if (mediaRecorder.current?.state === 'recording') {
+        mediaRecorder.current.stop()
+        setRecording(false)
+        if (beatAudioElement) beatAudioElement.pause()
+      }
+    }, heatLength * 1000)
   }, [createChain])
 
   const stop = useCallback((beatAudioElement) => {
+    if (countdownRef.current) clearTimeout(countdownRef.current)
     if (mediaRecorder.current?.state === 'recording') {
       mediaRecorder.current.stop()
       setRecording(false)
     }
     if (beatAudioElement) {
       beatAudioElement.pause()
+      beatAudioElement.loop = false
     }
+  }, [])
+
+  const cleanup = useCallback(() => {
+    clearInterval(timerRef.current)
+    clearTimeout(countdownRef.current)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close()
+      audioCtxRef.current = null
+    }
+    monitorRef.current = null
+    beatSourceRef.current = null
   }, [])
 
   const reset = useCallback(() => {
     setAudioBlob(null)
     setDuration(0)
+    setTimeRemaining(null)
   }, [])
 
   const toggleMonitor = useCallback((on) => {
@@ -129,5 +151,8 @@ export function useRecorder() {
     }
   }, [])
 
-  return { recording, audioBlob, duration, beatInMix, start, stop, reset, toggleMonitor }
+  return {
+    recording, audioBlob, duration, timeRemaining,
+    start, stop, reset, cleanup, toggleMonitor
+  }
 }
