@@ -1,7 +1,48 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 
 // Pro vocal chain optimized for phone mics + headphones
 // Presets: raw (bypass), clean (polish), studio (full production)
+
+// Pre-compute expensive buffers once (these are pure data, no AudioContext needed for the curve)
+const WAVESHAPER_SAMPLES = 44100
+const _cachedWaveshaperCurve = new Float32Array(WAVESHAPER_SAMPLES)
+for (let i = 0; i < WAVESHAPER_SAMPLES; i++) {
+  const x = (i * 2) / WAVESHAPER_SAMPLES - 1
+  _cachedWaveshaperCurve[i] = (Math.tanh(x * 1.8) + Math.tanh(x * 0.5) * 0.3) / 1.3
+}
+
+// Pre-compute impulse response data (raw Float32Arrays — we create the AudioBuffer lazily per context)
+const REVERB_TIME = 0.9
+const IMPULSE_SR = 48000
+const IMPULSE_LEN = Math.floor(IMPULSE_SR * REVERB_TIME)
+const _cachedImpulseData = [new Float32Array(IMPULSE_LEN), new Float32Array(IMPULSE_LEN)]
+const earlyTaps = [0.008, 0.013, 0.019, 0.024, 0.031, 0.037, 0.044]
+for (let ch = 0; ch < 2; ch++) {
+  const d = _cachedImpulseData[ch]
+  for (let i = 0; i < IMPULSE_LEN; i++) {
+    const t = i / IMPULSE_SR
+    const tNorm = i / IMPULSE_LEN
+    let early = 0
+    for (const tap of earlyTaps) {
+      const tapSample = Math.floor(tap * IMPULSE_SR)
+      if (i >= tapSample - 20 && i <= tapSample + 20) {
+        early += (Math.random() * 2 - 1) * 0.4 * Math.exp(-Math.abs(i - tapSample) / 10)
+      }
+    }
+    const decay = Math.exp(-t * 3.5) * (1 - tNorm * 0.2)
+    const noise = (Math.random() * 2 - 1)
+    const mod = Math.sin(t * 2.3 * (1 + ch * 0.7)) * 0.08
+    d[i] = (early + noise * decay + mod * decay) * 0.7
+  }
+}
+
+function createImpulseBuffer(ctx) {
+  const buf = ctx.createBuffer(2, IMPULSE_LEN, IMPULSE_SR)
+  for (let ch = 0; ch < 2; ch++) {
+    buf.getChannelData(ch).set(_cachedImpulseData[ch])
+  }
+  return buf
+}
 
 function createRawChain(ctx, source) {
   const gain = ctx.createGain()
@@ -162,15 +203,9 @@ function createStudioChain(ctx, source) {
   air.frequency.value = 12000
   air.gain.value = 2
 
-  // Harmonic exciter
+  // Harmonic exciter (uses pre-computed curve)
   const exciter = ctx.createWaveShaper()
-  const n = 44100
-  const curve = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    const x = (i * 2) / n - 1
-    curve[i] = (Math.tanh(x * 1.8) + Math.tanh(x * 0.5) * 0.3) / 1.3
-  }
-  exciter.curve = curve
+  exciter.curve = _cachedWaveshaperCurve
   exciter.oversample = '4x'
 
   const exciterWet = ctx.createGain()
@@ -187,32 +222,9 @@ function createStudioChain(ctx, source) {
   const delayR = ctx.createDelay()
   delayR.delayTime.value = 0.0006
 
-  // Plate reverb
+  // Plate reverb (uses pre-computed impulse data)
   const convolver = ctx.createConvolver()
-  const reverbTime = 0.9
-  const sr = ctx.sampleRate
-  const len = sr * reverbTime
-  const impulse = ctx.createBuffer(2, len, sr)
-  for (let ch = 0; ch < 2; ch++) {
-    const d = impulse.getChannelData(ch)
-    for (let i = 0; i < len; i++) {
-      const t = i / sr
-      const tNorm = i / len
-      let early = 0
-      const earlyTaps = [0.008, 0.013, 0.019, 0.024, 0.031, 0.037, 0.044]
-      for (const tap of earlyTaps) {
-        const tapSample = Math.floor(tap * sr)
-        if (i >= tapSample - 20 && i <= tapSample + 20) {
-          early += (Math.random() * 2 - 1) * 0.4 * Math.exp(-Math.abs(i - tapSample) / 10)
-        }
-      }
-      const decay = Math.exp(-t * 3.5) * (1 - tNorm * 0.2)
-      const noise = (Math.random() * 2 - 1)
-      const mod = Math.sin(t * 2.3 * (1 + ch * 0.7)) * 0.08
-      d[i] = (early + noise * decay + mod * decay) * 0.7
-    }
-  }
-  convolver.buffer = impulse
+  convolver.buffer = createImpulseBuffer(ctx)
 
   const preDelay = ctx.createDelay()
   preDelay.delayTime.value = 0.02

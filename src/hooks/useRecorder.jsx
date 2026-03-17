@@ -43,14 +43,8 @@ export function useRecorder() {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
-    // Start beat IMMEDIATELY — don't wait for mic
-    if (beatAudioElement) {
-      beatAudioElement.currentTime = 0
-      beatAudioElement.loop = true
-      beatAudioElement.play()
-    }
-
-    // Mic should be fast now (pre-warmed, permission cached)
+    // Get mic stream first (fast — pre-warmed, permission cached)
+    // Do this BEFORE beat so main thread isn't blocked during playback
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: !headphones,
@@ -62,8 +56,16 @@ export function useRecorder() {
     })
     streamRef.current = stream
 
-    const audioCtx = new AudioContext({ sampleRate: 48000 })
-    audioCtxRef.current = audioCtx
+    // Reuse AudioContext if we already have one, otherwise create
+    let audioCtx = audioCtxRef.current
+    if (!audioCtx || audioCtx.state === 'closed') {
+      audioCtx = new AudioContext({ sampleRate: 48000 })
+      audioCtxRef.current = audioCtx
+    }
+    // Resume if suspended (browser autoplay policy)
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume()
+    }
 
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
@@ -101,6 +103,14 @@ export function useRecorder() {
     }
 
     mediaRecorder.current = recorder
+
+    // Start beat right before recorder — everything is wired up, no more blocking work
+    if (beatAudioElement) {
+      beatAudioElement.currentTime = 0
+      beatAudioElement.loop = true
+      beatAudioElement.play()
+    }
+
     recorder.start(100)
     setRecording(true)
     setLoading(false)
@@ -189,9 +199,9 @@ export function useRecorder() {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
     }
-    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-      audioCtxRef.current.close()
-      audioCtxRef.current = null
+    // Keep AudioContext alive for reuse — only suspend it
+    if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+      audioCtxRef.current.suspend()
     }
     monitorRef.current = null
   }, [])
@@ -209,8 +219,17 @@ export function useRecorder() {
     }
   }, [])
 
+  // Full teardown — close AudioContext (call on unmount)
+  const destroy = useCallback(() => {
+    cleanup()
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close()
+      audioCtxRef.current = null
+    }
+  }, [cleanup])
+
   return {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, toggleMonitor
+    start, stop, reset, cleanup, destroy, toggleMonitor
   }
 }
