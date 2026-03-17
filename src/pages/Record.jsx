@@ -18,7 +18,10 @@ export default function Record() {
   const battleId = location.state?.battleId
   const roundNumber = location.state?.roundNumber
 
-  const { recording, audioBlob, duration, timeRemaining, start, stop, reset, cleanup, toggleMonitor } = useRecorder()
+  const {
+    recording, audioBlob, duration, timeRemaining, transcript,
+    start, stop, reset, cleanup, toggleMonitor, setBeatVolume
+  } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
   const [headphones, setHeadphones] = useState(false)
@@ -27,9 +30,12 @@ export default function Record() {
   const [beats, setBeats] = useState([])
   const [heatLength, setHeatLength] = useState(90)
   const [preset, setPreset] = useState('studio')
+  const [beatVol, setBeatVol] = useState(0.7)
+  const [targets, setTargets] = useState([])
+  const [participants, setParticipants] = useState([])
   const beatAudioRef = useRef(null)
 
-  // Cleanup on page leave — stop recording, release mic, stop beat
+  // Cleanup on page leave
   useEffect(() => {
     return () => {
       cleanup()
@@ -39,6 +45,17 @@ export default function Record() {
       }
     }
   }, [cleanup])
+
+  // Load participants if responding to a battle (for tagging)
+  useEffect(() => {
+    if (battleId) {
+      supabase
+        .from('battle_participants')
+        .select('user_id')
+        .eq('battle_id', battleId)
+        .then(({ data }) => setParticipants(data || []))
+    }
+  }, [battleId])
 
   useEffect(() => {
     if (!selectedBeat) {
@@ -58,16 +75,21 @@ export default function Record() {
     if (recording) {
       stop(beatAudioRef.current)
     } else {
-      // Enable monitoring by default in headphone mode
-      if (headphones) {
-        setMonitoring(true)
-      }
+      if (headphones) setMonitoring(true)
       await start(beatAudioRef.current, { preset, heatLength })
-      // Set monitor after start if headphones
-      if (headphones) {
-        toggleMonitor(true)
-      }
+      if (headphones) toggleMonitor(true)
     }
+  }
+
+  const handleBeatVolume = (val) => {
+    setBeatVol(val)
+    setBeatVolume(val)
+  }
+
+  const toggleTarget = (userId) => {
+    setTargets(prev =>
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    )
   }
 
   const handleSave = async (mode) => {
@@ -87,7 +109,8 @@ export default function Record() {
         battle_id: battleId,
         user_id: user.id,
         audio_url: publicUrl,
-        round_number: roundNumber || 2
+        round_number: roundNumber || 2,
+        targets: targets.length > 0 ? targets : []
       })
       setSaving(false)
       navigate(`/battles/${battleId}`)
@@ -103,7 +126,6 @@ export default function Record() {
         status: 'open'
       }).select().single()
 
-      // Add creator to battle_participants
       await supabase.from('battle_participants').insert({
         battle_id: battle.id,
         user_id: user.id,
@@ -114,7 +136,8 @@ export default function Record() {
         battle_id: battle.id,
         user_id: user.id,
         audio_url: publicUrl,
-        round_number: 1
+        round_number: 1,
+        targets: targets.length > 0 ? targets : []
       })
 
       setShareCode(code)
@@ -153,10 +176,9 @@ export default function Record() {
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
 
-      {/* Settings — always visible when not actively recording */}
+      {/* Settings — visible when not actively recording */}
       {!recording && (
         <div className="record-settings">
-          {/* Heat length */}
           <div className="setting-group">
             <div className="setting-label">Heat</div>
             <div className="setting-options">
@@ -172,7 +194,6 @@ export default function Record() {
             </div>
           </div>
 
-          {/* FX preset */}
           <div className="setting-group">
             <div className="setting-label">Voice FX</div>
             <div className="setting-options">
@@ -189,7 +210,6 @@ export default function Record() {
             </div>
           </div>
 
-          {/* Audio mode */}
           <div className="setting-group">
             <div className="setting-label">Mode</div>
             <div className="setting-options">
@@ -210,7 +230,30 @@ export default function Record() {
         </div>
       )}
 
-      {/* Active recording badges */}
+      {/* Beat volume slider — visible during recording */}
+      {recording && (
+        <div className="setting-group" style={{ width: '100%', padding: '0 16px' }}>
+          <div className="setting-label">Beat Vol</div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={beatVol}
+            onChange={e => handleBeatVolume(parseFloat(e.target.value))}
+            style={{
+              flex: 1,
+              accentColor: 'var(--color-neon-pink)',
+              height: 4
+            }}
+          />
+          <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', minWidth: 30 }}>
+            {Math.round(beatVol * 100)}%
+          </span>
+        </div>
+      )}
+
+      {/* Active badges */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <div className="fx-badge">{preset === 'raw' ? 'Raw' : preset === 'clean' ? 'Clean FX' : 'Studio FX'}</div>
         <div className="fx-badge" style={{
@@ -246,7 +289,7 @@ export default function Record() {
         </div>
       )}
 
-      {/* Timer: shows elapsed / remaining */}
+      {/* Timer */}
       <div className="record-timer">{formatTime(duration)}</div>
       {recording && timeRemaining != null && (
         <div style={{
@@ -257,6 +300,25 @@ export default function Record() {
           transition: 'color 0.3s'
         }}>
           {formatTime(timeRemaining)} remaining
+        </div>
+      )}
+
+      {/* Live transcript while recording */}
+      {recording && transcript && (
+        <div style={{
+          width: '100%',
+          padding: '8px 12px',
+          background: 'rgba(255,255,255,0.03)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.75rem',
+          color: 'var(--color-text-muted)',
+          fontFamily: 'var(--font-mono)',
+          maxHeight: 80,
+          overflow: 'hidden',
+          textAlign: 'center',
+          lineHeight: 1.4
+        }}>
+          {transcript}
         </div>
       )}
 
@@ -273,6 +335,43 @@ export default function Record() {
             <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle ({preset} FX)</div>
             <AudioPlayer src={URL.createObjectURL(audioBlob)} beatSrc={selectedBeat.audio_url} />
           </div>
+
+          {/* Transcript */}
+          {transcript && (
+            <div className="card">
+              <div className="beat-meta" style={{ marginBottom: 8 }}>Transcript</div>
+              <div style={{
+                fontSize: '0.8rem',
+                lineHeight: 1.5,
+                color: 'var(--color-text)',
+                fontFamily: 'var(--font-mono)'
+              }}>
+                {transcript}
+              </div>
+            </div>
+          )}
+
+          {/* Tag targets (when in a battle) */}
+          {battleId && participants.length > 0 && (
+            <div className="card">
+              <div className="beat-meta" style={{ marginBottom: 8 }}>Who you dissing?</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {participants
+                  .filter(p => p.user_id !== (supabase.auth.getUser && null))
+                  .map(p => (
+                    <button
+                      key={p.user_id}
+                      className={`setting-btn ${targets.includes(p.user_id) ? 'active' : ''}`}
+                      onClick={() => toggleTarget(p.user_id)}
+                      style={{ fontSize: '0.65rem' }}
+                    >
+                      @ {p.user_id.slice(0, 6)}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary btn-full" onClick={reset}>Redo</button>
             <button

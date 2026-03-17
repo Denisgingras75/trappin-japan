@@ -6,6 +6,7 @@ export function useRecorder() {
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
   const [timeRemaining, setTimeRemaining] = useState(null)
+  const [transcript, setTranscript] = useState('')
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const timerRef = useRef(null)
@@ -13,14 +14,16 @@ export function useRecorder() {
   const startTimeRef = useRef(null)
   const audioCtxRef = useRef(null)
   const beatSourceRef = useRef(null)
+  const beatGainRef = useRef(null)
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
+  const recognitionRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90 } = {}) => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: false,  // off — we no longer record beat through mic
+        echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
         sampleRate: { ideal: 48000 },
@@ -47,19 +50,23 @@ export function useRecorder() {
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
 
-    // Beat plays through speakers ONLY — NOT routed to recording
+    // Beat plays through speakers with volume control — NOT routed to recording
     if (beatAudioElement) {
       try {
         const beatSource = audioCtx.createMediaElementSource(beatAudioElement)
         beatSourceRef.current = beatSource
-        beatSource.connect(audioCtx.destination)
+        const beatGain = audioCtx.createGain()
+        beatGain.gain.value = 0.7  // default beat volume (lower than full)
+        beatGainRef.current = beatGain
+        beatSource.connect(beatGain)
+        beatGain.connect(audioCtx.destination)
         beatAudioElement.currentTime = 0
         beatAudioElement.loop = true
         beatAudioElement.play()
       } catch (e) {
-        // Already connected — just play
         beatAudioElement.currentTime = 0
         beatAudioElement.loop = true
+        beatAudioElement.volume = 0.7
         beatAudioElement.play()
       }
     }
@@ -83,6 +90,7 @@ export function useRecorder() {
     recorder.onstop = () => {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
+      stopTranscription()
       cleanup()
     }
 
@@ -91,8 +99,12 @@ export function useRecorder() {
     setRecording(true)
     setAudioBlob(null)
     setDuration(0)
+    setTranscript('')
     setTimeRemaining(heatLength)
     startTimeRef.current = Date.now()
+
+    // Start speech recognition for transcript
+    startTranscription()
 
     // Duration counter
     timerRef.current = setInterval(() => {
@@ -111,6 +123,49 @@ export function useRecorder() {
       }
     }, heatLength * 1000)
   }, [createChain])
+
+  function startTranscription() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
+    const recognition = new SR()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+
+    let finalText = ''
+    recognition.onresult = (e) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript
+        if (e.results[i].isFinal) {
+          finalText += t + ' '
+        } else {
+          interim = t
+        }
+      }
+      setTranscript(finalText + interim)
+    }
+
+    recognition.onerror = () => {} // silently ignore
+    recognition.onend = () => {
+      // Restart if still recording (browser cuts off after ~60s)
+      if (mediaRecorder.current?.state === 'recording') {
+        try { recognition.start() } catch (e) {}
+      }
+    }
+
+    try {
+      recognition.start()
+      recognitionRef.current = recognition
+    } catch (e) {}
+  }
+
+  function stopTranscription() {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop() } catch (e) {}
+      recognitionRef.current = null
+    }
+  }
 
   const stop = useCallback((beatAudioElement) => {
     if (countdownRef.current) clearTimeout(countdownRef.current)
@@ -137,12 +192,14 @@ export function useRecorder() {
     }
     monitorRef.current = null
     beatSourceRef.current = null
+    beatGainRef.current = null
   }, [])
 
   const reset = useCallback(() => {
     setAudioBlob(null)
     setDuration(0)
     setTimeRemaining(null)
+    setTranscript('')
   }, [])
 
   const toggleMonitor = useCallback((on) => {
@@ -151,8 +208,14 @@ export function useRecorder() {
     }
   }, [])
 
+  const setBeatVolume = useCallback((val) => {
+    if (beatGainRef.current) {
+      beatGainRef.current.gain.value = val
+    }
+  }, [])
+
   return {
-    recording, audioBlob, duration, timeRemaining,
-    start, stop, reset, cleanup, toggleMonitor
+    recording, audioBlob, duration, timeRemaining, transcript,
+    start, stop, reset, cleanup, toggleMonitor, setBeatVolume
   }
 }
