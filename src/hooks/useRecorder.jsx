@@ -20,41 +20,61 @@ export function useRecorder() {
   const recognitionRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  // Pre-warm mic on mount — get permission + activate hardware early
-  useEffect(() => {
-    let warmStream = null
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        warmStream = stream
-        setMicReady(true)
-        // Keep stream alive briefly, then release (permission is now cached)
-        setTimeout(() => {
-          stream.getTracks().forEach(t => t.stop())
-        }, 500)
-      })
-      .catch(() => {})
+  const lastHeadphonesRef = useRef(null)
 
-    return () => {
-      if (warmStream) warmStream.getTracks().forEach(t => t.stop())
-    }
+  // Pre-warm mic + AudioContext on mount — keep stream alive for instant start
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+            sampleRate: { ideal: 48000 },
+            channelCount: { ideal: 1 }
+          }
+        })
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+
+        const ctx = new AudioContext({ sampleRate: 48000 })
+        audioCtxRef.current = ctx
+        // Suspend until needed (saves battery, avoids autoplay issues)
+        if (ctx.state === 'running') ctx.suspend()
+
+        setMicReady(true)
+      } catch (e) {}
+    })()
+
+    return () => { cancelled = true }
   }, [])
 
   const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90, headphones = false } = {}) => {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
-    // Get mic stream first (fast — pre-warmed, permission cached)
-    // Do this BEFORE beat so main thread isn't blocked during playback
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: !headphones,
-        noiseSuppression: false,
-        autoGainControl: false,
-        sampleRate: { ideal: 48000 },
-        channelCount: { ideal: 1 }
-      }
-    })
-    streamRef.current = stream
+    // Reuse pre-warmed mic stream if alive and echoCancellation mode hasn't changed
+    const ecChanged = lastHeadphonesRef.current !== null && lastHeadphonesRef.current !== headphones
+    const needNewStream = !streamRef.current
+      || streamRef.current.getTracks().some(t => t.readyState === 'ended')
+      || ecChanged
+    if (needNewStream) {
+      // Stop old stream if any
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: !headphones,
+          noiseSuppression: false,
+          autoGainControl: false,
+          sampleRate: { ideal: 48000 },
+          channelCount: { ideal: 1 }
+        }
+      })
+    }
+    lastHeadphonesRef.current = headphones
+    const stream = streamRef.current
 
     // Reuse AudioContext if we already have one, otherwise create
     let audioCtx = audioCtxRef.current
@@ -195,11 +215,7 @@ export function useRecorder() {
   const cleanup = useCallback(() => {
     clearInterval(timerRef.current)
     clearTimeout(countdownRef.current)
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop())
-      streamRef.current = null
-    }
-    // Keep AudioContext alive for reuse — only suspend it
+    // Keep mic stream + AudioContext alive for instant re-record
     if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
       audioCtxRef.current.suspend()
     }
@@ -219,9 +235,13 @@ export function useRecorder() {
     }
   }, [])
 
-  // Full teardown — close AudioContext (call on unmount)
+  // Full teardown — release mic + close AudioContext (call on unmount)
   const destroy = useCallback(() => {
     cleanup()
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close()
       audioCtxRef.current = null
