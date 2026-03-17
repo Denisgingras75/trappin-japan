@@ -22,7 +22,7 @@ export default function Record() {
   const { user } = useAuth()
   const {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, toggleMonitor
+    start, stop, reset, cleanup, destroy, toggleMonitor
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
@@ -40,16 +40,16 @@ export default function Record() {
     return audioBlob ? URL.createObjectURL(audioBlob) : null
   }, [audioBlob])
 
-  // Cleanup on page leave
+  // Full teardown on page leave (close AudioContext)
   useEffect(() => {
     return () => {
-      cleanup()
+      destroy()
       if (beatAudioRef.current) {
         beatAudioRef.current.pause()
         beatAudioRef.current.currentTime = 0
       }
     }
-  }, [cleanup])
+  }, [destroy])
 
   // Load participants if responding to a battle (for tagging)
   useEffect(() => {
