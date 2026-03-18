@@ -124,13 +124,6 @@ export function useRecorder() {
 
     mediaRecorder.current = recorder
 
-    // Start beat right before recorder — everything is wired up, no more blocking work
-    if (beatAudioElement) {
-      beatAudioElement.currentTime = 0
-      beatAudioElement.loop = true
-      beatAudioElement.play()
-    }
-
     recorder.start(100)
     setRecording(true)
     setLoading(false)
@@ -153,7 +146,6 @@ export function useRecorder() {
       if (mediaRecorder.current?.state === 'recording') {
         mediaRecorder.current.stop()
         setRecording(false)
-        if (beatAudioElement) beatAudioElement.pause()
       }
     }, heatLength * 1000)
   }, [createChain])
@@ -200,15 +192,11 @@ export function useRecorder() {
     }
   }
 
-  const stop = useCallback((beatAudioElement) => {
+  const stop = useCallback(() => {
     if (countdownRef.current) clearTimeout(countdownRef.current)
     if (mediaRecorder.current?.state === 'recording') {
       mediaRecorder.current.stop()
       setRecording(false)
-    }
-    if (beatAudioElement) {
-      beatAudioElement.pause()
-      beatAudioElement.loop = false
     }
   }, [])
 
