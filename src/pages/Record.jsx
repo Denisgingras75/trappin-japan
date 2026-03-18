@@ -40,6 +40,15 @@ export default function Record() {
     return audioBlob ? URL.createObjectURL(audioBlob) : null
   }, [audioBlob])
 
+  // When recording stops (heat timer, beat end, etc.) — pause beat
+  const prevRecordingRef = useRef(false)
+  useEffect(() => {
+    if (prevRecordingRef.current && !recording && beatAudioRef.current) {
+      beatAudioRef.current.pause()
+    }
+    prevRecordingRef.current = recording
+  }, [recording])
+
   // Full teardown on page leave (close AudioContext)
   useEffect(() => {
     return () => {
@@ -78,10 +87,18 @@ export default function Record() {
 
   const handleRecord = async () => {
     if (recording) {
-      stop(beatAudioRef.current)
+      stop()
+      if (beatAudioRef.current) {
+        beatAudioRef.current.pause()
+      }
     } else {
+      // Start beat IMMEDIATELY — no waiting for mic/AudioContext setup
+      if (beatAudioRef.current) {
+        beatAudioRef.current.currentTime = 0
+        beatAudioRef.current.play()
+      }
       if (headphones) setMonitoring(true)
-      await start(beatAudioRef.current, { preset, heatLength, headphones })
+      await start(null, { preset, heatLength, headphones })
       if (headphones) toggleMonitor(true)
     }
   }
@@ -174,7 +191,17 @@ export default function Record() {
 
   return (
     <div className="record-page">
-      <audio ref={beatAudioRef} src={selectedBeat.audio_url} loop preload="auto" />
+      <audio
+        ref={beatAudioRef}
+        src={selectedBeat.audio_url}
+        preload="auto"
+        onEnded={() => {
+          // Beat ran out — stop recording automatically
+          if (recording) {
+            stop()
+          }
+        }}
+      />
 
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
