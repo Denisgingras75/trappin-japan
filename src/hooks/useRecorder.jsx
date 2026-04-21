@@ -1,6 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useVoiceEffects } from './useVoiceEffects'
 
+// Mic-only recorder. Beat playback lives in Record.jsx on a separate
+// AudioContext so the mic/effects/MediaRecorder pipeline can't starve
+// the beat's audio thread (that was causing the mid-playback sputter).
+
 export function useRecorder() {
   const [recording, setRecording] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -18,15 +22,10 @@ export function useRecorder() {
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
   const recognitionRef = useRef(null)
-  const beatSourceRef = useRef(null)
-  const beatGainRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const lastHeadphonesRef = useRef(null)
 
-  // Pre-warm mic on mount. Keep the stream alive so iOS stays in
-  // record+playback audio-session mode and the OS doesn't switch modes
-  // (which is what caused the 9–15s beat cutout on Rec tap).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -49,14 +48,7 @@ export function useRecorder() {
     return () => { cancelled = true }
   }, [])
 
-  // start() now drives the beat itself — give it a decoded AudioBuffer and
-  // it'll play the beat via a BufferSourceNode in the same AudioContext that
-  // captures the mic. No <audio> element → no network re-buffer → no seek
-  // latency → no lag.
-  const start = useCallback(async (
-    beatBuffer,
-    { preset = 'studio', heatLength = 90, headphones = false, beatVolume = 0.7 } = {}
-  ) => {
+  const start = useCallback(async ({ preset = 'studio', heatLength = 90, headphones = false } = {}) => {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
@@ -88,7 +80,6 @@ export function useRecorder() {
       await audioCtx.resume()
     }
 
-    // Mic → effects → dest → MediaRecorder (voice only, beat NOT in recording)
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
 
@@ -120,26 +111,10 @@ export function useRecorder() {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
       stopTranscription()
-      stopBeat()
       setTimeout(() => cleanup(), 150)
     }
 
     mediaRecorder.current = recorder
-
-    // Build the beat playback graph in the SAME context — instant start,
-    // perfect volume control via GainNode, AEC reference available to the
-    // browser.
-    if (beatBuffer) {
-      const gain = audioCtx.createGain()
-      gain.gain.value = beatVolume
-      const src = audioCtx.createBufferSource()
-      src.buffer = beatBuffer
-      src.connect(gain)
-      gain.connect(audioCtx.destination)
-      beatSourceRef.current = src
-      beatGainRef.current = gain
-      src.start(0)
-    }
 
     recorder.start(100)
     setRecording(true)
@@ -209,18 +184,6 @@ export function useRecorder() {
     }
   }
 
-  function stopBeat() {
-    if (beatSourceRef.current) {
-      try { beatSourceRef.current.stop() } catch (e) {}
-      try { beatSourceRef.current.disconnect() } catch (e) {}
-      beatSourceRef.current = null
-    }
-    if (beatGainRef.current) {
-      try { beatGainRef.current.disconnect() } catch (e) {}
-      beatGainRef.current = null
-    }
-  }
-
   const stop = useCallback(() => {
     if (countdownRef.current) clearTimeout(countdownRef.current)
     if (mediaRecorder.current?.state === 'recording') {
@@ -233,7 +196,6 @@ export function useRecorder() {
     clearInterval(timerRef.current)
     clearTimeout(countdownRef.current)
     monitorRef.current = null
-    stopBeat()
   }, [])
 
   const reset = useCallback(() => {
@@ -246,13 +208,6 @@ export function useRecorder() {
   const toggleMonitor = useCallback((on) => {
     if (monitorRef.current) {
       monitorRef.current.gain.value = on ? 0.8 : 0
-    }
-  }, [])
-
-  // Live beat volume — updates GainNode immediately, no re-render, no glitches
-  const setBeatVolume = useCallback((v) => {
-    if (beatGainRef.current) {
-      beatGainRef.current.gain.setTargetAtTime(v, audioCtxRef.current?.currentTime || 0, 0.01)
     }
   }, [])
 
@@ -270,6 +225,6 @@ export function useRecorder() {
 
   return {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor, setBeatVolume
+    start, stop, reset, cleanup, destroy, toggleMonitor
   }
 }
