@@ -1,5 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 
+// Playback mix when both voice + beat are present.
+// Voice-only (no beatSrc) plays voice at default 1.0.
+const BEAT_VOLUME = 0.60
+const VOICE_VOLUME = 0.40
+
 export default function AudioPlayer({ src, beatSrc, accent }) {
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
@@ -49,10 +54,13 @@ export default function AudioPlayer({ src, beatSrc, accent }) {
     }
   }, [src])
 
-  // Set beat volume lower so voice cuts through
+  // 60/40 instrumental-to-vocal mix when both tracks are present
   useEffect(() => {
+    if (beatSrc && audioRef.current) {
+      audioRef.current.volume = VOICE_VOLUME
+    }
     if (beatRef.current) {
-      beatRef.current.volume = 0.55
+      beatRef.current.volume = BEAT_VOLUME
     }
   }, [beatSrc])
 
