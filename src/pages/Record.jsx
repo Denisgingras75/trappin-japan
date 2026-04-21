@@ -22,7 +22,7 @@ export default function Record() {
   const { user } = useAuth()
   const {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor
+    start, stop, reset, cleanup, destroy, toggleMonitor, setBeatVolume
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
@@ -33,29 +33,48 @@ export default function Record() {
   const [heatLength, setHeatLength] = useState(90)
   const [preset, setPreset] = useState('studio')
   const [beatVol, setBeatVol] = useState(0.7)
+  const [beatBuffer, setBeatBuffer] = useState(null)
+  const [beatLoading, setBeatLoading] = useState(false)
   const [targets, setTargets] = useState([])
   const [participants, setParticipants] = useState([])
-  const beatAudioRef = useRef(null)
+  const beatCtxRef = useRef(null)
   const blobUrl = useMemo(() => {
     return audioBlob ? URL.createObjectURL(audioBlob) : null
   }, [audioBlob])
 
-  // When recording stops (heat timer, beat end, etc.) — pause beat
-  const prevRecordingRef = useRef(false)
+  // Decode the beat to an AudioBuffer as soon as it's selected. The BufferSource
+  // in useRecorder plays it back instantly on Rec tap — no network fetch, no
+  // MediaElement seek latency, no OS audio-session switch. This is the fix
+  // for the record-start lag.
   useEffect(() => {
-    if (prevRecordingRef.current && !recording && beatAudioRef.current) {
-      beatAudioRef.current.pause()
-    }
-    prevRecordingRef.current = recording
-  }, [recording])
+    if (!selectedBeat?.audio_url) return
+    let cancelled = false
+    setBeatLoading(true)
+    setBeatBuffer(null)
+    ;(async () => {
+      try {
+        if (!beatCtxRef.current || beatCtxRef.current.state === 'closed') {
+          beatCtxRef.current = new AudioContext({ sampleRate: 48000 })
+        }
+        const res = await fetch(selectedBeat.audio_url)
+        const arr = await res.arrayBuffer()
+        const buf = await beatCtxRef.current.decodeAudioData(arr)
+        if (cancelled) return
+        setBeatBuffer(buf)
+      } catch (e) {} finally {
+        if (!cancelled) setBeatLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedBeat?.audio_url])
 
-  // Full teardown on page leave (close AudioContext)
+  // Full teardown on page leave
   useEffect(() => {
     return () => {
       destroy()
-      if (beatAudioRef.current) {
-        beatAudioRef.current.pause()
-        beatAudioRef.current.currentTime = 0
+      if (beatCtxRef.current && beatCtxRef.current.state !== 'closed') {
+        beatCtxRef.current.close()
+        beatCtxRef.current = null
       }
     }
   }, [destroy])
@@ -88,27 +107,17 @@ export default function Record() {
   const handleRecord = async () => {
     if (recording) {
       stop()
-      if (beatAudioRef.current) {
-        beatAudioRef.current.pause()
-      }
     } else {
-      // Bring up mic pipeline FIRST. On mobile, engaging the mic/MediaRecorder
-      // triggers an OS audio-session switch (playback → record+playback) that
-      // interrupts any <audio> already playing. Starting the beat after the
-      // switch avoids the 9-15s cutout users were seeing.
+      if (!beatBuffer) return
       if (headphones) setMonitoring(true)
-      await start(null, { preset, heatLength, headphones })
+      await start(beatBuffer, { preset, heatLength, headphones, beatVolume: beatVol })
       if (headphones) toggleMonitor(true)
-      if (beatAudioRef.current) {
-        beatAudioRef.current.currentTime = 0
-        beatAudioRef.current.play()
-      }
     }
   }
 
   const handleBeatVolume = (val) => {
     setBeatVol(val)
-    if (beatAudioRef.current) beatAudioRef.current.volume = val
+    setBeatVolume(val)
   }
 
   const toggleTarget = (userId) => {
@@ -194,18 +203,6 @@ export default function Record() {
 
   return (
     <div className="record-page">
-      <audio
-        ref={beatAudioRef}
-        src={selectedBeat.audio_url}
-        preload="auto"
-        onEnded={() => {
-          // Beat ran out — stop recording automatically
-          if (recording) {
-            stop()
-          }
-        }}
-      />
-
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
@@ -360,9 +357,9 @@ export default function Record() {
       <button
         className={`btn-record ${recording ? 'recording' : ''}`}
         onClick={handleRecord}
-        disabled={loading}
+        disabled={loading || (!recording && !beatBuffer)}
       >
-        {loading ? '...' : recording ? 'Stop' : 'Rec'}
+        {loading ? '...' : recording ? 'Stop' : beatLoading ? 'Loading beat...' : !beatBuffer ? 'Beat unavailable' : 'Rec'}
       </button>
 
       {audioBlob && !recording && (

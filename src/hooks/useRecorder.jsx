@@ -18,15 +18,15 @@ export function useRecorder() {
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
   const recognitionRef = useRef(null)
-  const primerRef = useRef(null)
+  const beatSourceRef = useRef(null)
+  const beatGainRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const lastHeadphonesRef = useRef(null)
 
-  // Pre-warm mic + AudioContext on mount — keep stream alive for instant start.
-  // We also keep a silent sink connected to the mic so the browser's echo
-  // canceller / AGC has time to adapt before the user taps Rec (otherwise the
-  // first several seconds of the beat get swallowed while AEC is adapting).
+  // Pre-warm mic on mount. Keep the stream alive so iOS stays in
+  // record+playback audio-session mode and the OS doesn't switch modes
+  // (which is what caused the 9–15s beat cutout on Rec tap).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -42,21 +42,6 @@ export function useRecorder() {
         })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
-
-        const ctx = new AudioContext({ sampleRate: 48000 })
-        audioCtxRef.current = ctx
-
-        // Silent primer: pulls audio through the mic so AEC adapts in the
-        // background. Gain 0 → inaudible, but keeps the graph running.
-        try {
-          const src = ctx.createMediaStreamSource(stream)
-          const silentGain = ctx.createGain()
-          silentGain.gain.value = 0
-          src.connect(silentGain)
-          silentGain.connect(ctx.destination)
-          primerRef.current = { src, silentGain }
-        } catch (e) {}
-
         setMicReady(true)
       } catch (e) {}
     })()
@@ -64,17 +49,22 @@ export function useRecorder() {
     return () => { cancelled = true }
   }, [])
 
-  const start = useCallback(async (beatAudioElement, { preset = 'studio', heatLength = 90, headphones = false } = {}) => {
+  // start() now drives the beat itself — give it a decoded AudioBuffer and
+  // it'll play the beat via a BufferSourceNode in the same AudioContext that
+  // captures the mic. No <audio> element → no network re-buffer → no seek
+  // latency → no lag.
+  const start = useCallback(async (
+    beatBuffer,
+    { preset = 'studio', heatLength = 90, headphones = false, beatVolume = 0.7 } = {}
+  ) => {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
-    // Reuse pre-warmed mic stream if alive and echoCancellation mode hasn't changed
     const ecChanged = lastHeadphonesRef.current !== null && lastHeadphonesRef.current !== headphones
     const needNewStream = !streamRef.current
       || streamRef.current.getTracks().some(t => t.readyState === 'ended')
       || ecChanged
     if (needNewStream) {
-      // Stop old stream if any
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -89,24 +79,16 @@ export function useRecorder() {
     lastHeadphonesRef.current = headphones
     const stream = streamRef.current
 
-    // Reuse AudioContext if we already have one, otherwise create
     let audioCtx = audioCtxRef.current
     if (!audioCtx || audioCtx.state === 'closed') {
       audioCtx = new AudioContext({ sampleRate: 48000 })
       audioCtxRef.current = audioCtx
     }
-    // Resume if suspended (browser autoplay policy)
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume()
     }
 
-    // Tear down the silent primer chain before building the real chain
-    if (primerRef.current) {
-      try { primerRef.current.src.disconnect() } catch (e) {}
-      try { primerRef.current.silentGain.disconnect() } catch (e) {}
-      primerRef.current = null
-    }
-
+    // Mic → effects → dest → MediaRecorder (voice only, beat NOT in recording)
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
 
@@ -119,7 +101,6 @@ export function useRecorder() {
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
 
-    // Codec selection
     let mimeType = 'audio/webm;codecs=opus'
     if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
       mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
@@ -139,10 +120,26 @@ export function useRecorder() {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
       stopTranscription()
+      stopBeat()
       setTimeout(() => cleanup(), 150)
     }
 
     mediaRecorder.current = recorder
+
+    // Build the beat playback graph in the SAME context — instant start,
+    // perfect volume control via GainNode, AEC reference available to the
+    // browser.
+    if (beatBuffer) {
+      const gain = audioCtx.createGain()
+      gain.gain.value = beatVolume
+      const src = audioCtx.createBufferSource()
+      src.buffer = beatBuffer
+      src.connect(gain)
+      gain.connect(audioCtx.destination)
+      beatSourceRef.current = src
+      beatGainRef.current = gain
+      src.start(0)
+    }
 
     recorder.start(100)
     setRecording(true)
@@ -212,6 +209,18 @@ export function useRecorder() {
     }
   }
 
+  function stopBeat() {
+    if (beatSourceRef.current) {
+      try { beatSourceRef.current.stop() } catch (e) {}
+      try { beatSourceRef.current.disconnect() } catch (e) {}
+      beatSourceRef.current = null
+    }
+    if (beatGainRef.current) {
+      try { beatGainRef.current.disconnect() } catch (e) {}
+      beatGainRef.current = null
+    }
+  }
+
   const stop = useCallback(() => {
     if (countdownRef.current) clearTimeout(countdownRef.current)
     if (mediaRecorder.current?.state === 'recording') {
@@ -223,23 +232,8 @@ export function useRecorder() {
   const cleanup = useCallback(() => {
     clearInterval(timerRef.current)
     clearTimeout(countdownRef.current)
-    // Keep mic stream + AudioContext running so the next record starts instantly
-    // and the OS doesn't re-switch audio session modes.
     monitorRef.current = null
-
-    // Re-attach silent primer so AEC stays adapted between takes
-    const ctx = audioCtxRef.current
-    const stream = streamRef.current
-    if (ctx && ctx.state === 'running' && stream && !primerRef.current) {
-      try {
-        const src = ctx.createMediaStreamSource(stream)
-        const silentGain = ctx.createGain()
-        silentGain.gain.value = 0
-        src.connect(silentGain)
-        silentGain.connect(ctx.destination)
-        primerRef.current = { src, silentGain }
-      } catch (e) {}
-    }
+    stopBeat()
   }, [])
 
   const reset = useCallback(() => {
@@ -255,14 +249,15 @@ export function useRecorder() {
     }
   }, [])
 
-  // Full teardown — release mic + close AudioContext (call on unmount)
+  // Live beat volume — updates GainNode immediately, no re-render, no glitches
+  const setBeatVolume = useCallback((v) => {
+    if (beatGainRef.current) {
+      beatGainRef.current.gain.setTargetAtTime(v, audioCtxRef.current?.currentTime || 0, 0.01)
+    }
+  }, [])
+
   const destroy = useCallback(() => {
     cleanup()
-    if (primerRef.current) {
-      try { primerRef.current.src.disconnect() } catch (e) {}
-      try { primerRef.current.silentGain.disconnect() } catch (e) {}
-      primerRef.current = null
-    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
@@ -275,6 +270,6 @@ export function useRecorder() {
 
   return {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor
+    start, stop, reset, cleanup, destroy, toggleMonitor, setBeatVolume
   }
 }
