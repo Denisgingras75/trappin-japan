@@ -11,7 +11,6 @@ export function useRecorder() {
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
   const [timeRemaining, setTimeRemaining] = useState(null)
-  const [transcript, setTranscript] = useState('')
   const [micReady, setMicReady] = useState(false)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
@@ -21,7 +20,6 @@ export function useRecorder() {
   const audioCtxRef = useRef(null)
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
-  const recognitionRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const lastHeadphonesRef = useRef(null)
@@ -48,7 +46,7 @@ export function useRecorder() {
     return () => { cancelled = true }
   }, [])
 
-  const start = useCallback(async ({ preset = 'studio', heatLength = 90, headphones = false } = {}) => {
+  const start = useCallback(async ({ preset = 'clean', heatLength = 90, headphones = false } = {}) => {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
@@ -110,7 +108,6 @@ export function useRecorder() {
     recorder.onstop = () => {
       const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
       setAudioBlob(blob)
-      stopTranscription()
       setTimeout(() => cleanup(), 150)
     }
 
@@ -121,11 +118,8 @@ export function useRecorder() {
     setLoading(false)
     setAudioBlob(null)
     setDuration(0)
-    setTranscript('')
     setTimeRemaining(heatLength)
     startTimeRef.current = Date.now()
-
-    startTranscription()
 
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
@@ -141,48 +135,6 @@ export function useRecorder() {
       }
     }, heatLength * 1000)
   }, [createChain])
-
-  function startTranscription() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) return
-    const recognition = new SR()
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-
-    let finalText = ''
-    recognition.onresult = (e) => {
-      let interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript
-        if (e.results[i].isFinal) {
-          finalText += t + ' '
-        } else {
-          interim = t
-        }
-      }
-      setTranscript(finalText + interim)
-    }
-
-    recognition.onerror = () => {}
-    recognition.onend = () => {
-      if (mediaRecorder.current?.state === 'recording') {
-        try { recognition.start() } catch (e) {}
-      }
-    }
-
-    try {
-      recognition.start()
-      recognitionRef.current = recognition
-    } catch (e) {}
-  }
-
-  function stopTranscription() {
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop() } catch (e) {}
-      recognitionRef.current = null
-    }
-  }
 
   const stop = useCallback(() => {
     if (countdownRef.current) clearTimeout(countdownRef.current)
@@ -202,7 +154,6 @@ export function useRecorder() {
     setAudioBlob(null)
     setDuration(0)
     setTimeRemaining(null)
-    setTranscript('')
   }, [])
 
   const toggleMonitor = useCallback((on) => {
@@ -224,7 +175,7 @@ export function useRecorder() {
   }, [cleanup])
 
   return {
-    recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
+    recording, loading, audioBlob, duration, timeRemaining, micReady,
     start, stop, reset, cleanup, destroy, toggleMonitor
   }
 }
