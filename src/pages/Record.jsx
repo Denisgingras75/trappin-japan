@@ -144,12 +144,14 @@ export default function Record() {
 
       // Resume the beat context (user gesture) and fire the BufferSource.
       // Separate context from the recorder → no CPU contention → no sputter.
+      // Loop the beat so short beats (under heat length) don't cut the
+      // recording short — the heat timer is the authoritative stop.
       const ctx = beatCtxRef.current
       if (ctx.state === 'suspended') await ctx.resume()
       const src = ctx.createBufferSource()
       src.buffer = beatBuffer
+      src.loop = true
       src.connect(beatGainRef.current)
-      src.onended = () => { if (recording) stop() }
       beatSourceRef.current = src
       src.start(0)
     }
