@@ -92,14 +92,17 @@ export default function Record() {
         beatAudioRef.current.pause()
       }
     } else {
-      // Start beat IMMEDIATELY — no waiting for mic/AudioContext setup
+      // Bring up mic pipeline FIRST. On mobile, engaging the mic/MediaRecorder
+      // triggers an OS audio-session switch (playback → record+playback) that
+      // interrupts any <audio> already playing. Starting the beat after the
+      // switch avoids the 9-15s cutout users were seeing.
+      if (headphones) setMonitoring(true)
+      await start(null, { preset, heatLength, headphones })
+      if (headphones) toggleMonitor(true)
       if (beatAudioRef.current) {
         beatAudioRef.current.currentTime = 0
         beatAudioRef.current.play()
       }
-      if (headphones) setMonitoring(true)
-      await start(null, { preset, heatLength, headphones })
-      if (headphones) toggleMonitor(true)
     }
   }
 

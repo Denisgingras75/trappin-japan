@@ -20,9 +20,9 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  const signIn = () => supabase.auth.signInWithOAuth({
+  const signIn = (redirectTo) => supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.origin }
+    options: { redirectTo: redirectTo || window.location.href }
   })
 
   const signOut = () => supabase.auth.signOut()

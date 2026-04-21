@@ -18,11 +18,15 @@ export function useRecorder() {
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
   const recognitionRef = useRef(null)
+  const primerRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
   const lastHeadphonesRef = useRef(null)
 
-  // Pre-warm mic + AudioContext on mount — keep stream alive for instant start
+  // Pre-warm mic + AudioContext on mount — keep stream alive for instant start.
+  // We also keep a silent sink connected to the mic so the browser's echo
+  // canceller / AGC has time to adapt before the user taps Rec (otherwise the
+  // first several seconds of the beat get swallowed while AEC is adapting).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -41,8 +45,17 @@ export function useRecorder() {
 
         const ctx = new AudioContext({ sampleRate: 48000 })
         audioCtxRef.current = ctx
-        // Suspend until needed (saves battery, avoids autoplay issues)
-        if (ctx.state === 'running') ctx.suspend()
+
+        // Silent primer: pulls audio through the mic so AEC adapts in the
+        // background. Gain 0 → inaudible, but keeps the graph running.
+        try {
+          const src = ctx.createMediaStreamSource(stream)
+          const silentGain = ctx.createGain()
+          silentGain.gain.value = 0
+          src.connect(silentGain)
+          silentGain.connect(ctx.destination)
+          primerRef.current = { src, silentGain }
+        } catch (e) {}
 
         setMicReady(true)
       } catch (e) {}
@@ -85,6 +98,13 @@ export function useRecorder() {
     // Resume if suspended (browser autoplay policy)
     if (audioCtx.state === 'suspended') {
       await audioCtx.resume()
+    }
+
+    // Tear down the silent primer chain before building the real chain
+    if (primerRef.current) {
+      try { primerRef.current.src.disconnect() } catch (e) {}
+      try { primerRef.current.silentGain.disconnect() } catch (e) {}
+      primerRef.current = null
     }
 
     const micSource = audioCtx.createMediaStreamSource(stream)
@@ -203,11 +223,23 @@ export function useRecorder() {
   const cleanup = useCallback(() => {
     clearInterval(timerRef.current)
     clearTimeout(countdownRef.current)
-    // Keep mic stream + AudioContext alive for instant re-record
-    if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
-      audioCtxRef.current.suspend()
-    }
+    // Keep mic stream + AudioContext running so the next record starts instantly
+    // and the OS doesn't re-switch audio session modes.
     monitorRef.current = null
+
+    // Re-attach silent primer so AEC stays adapted between takes
+    const ctx = audioCtxRef.current
+    const stream = streamRef.current
+    if (ctx && ctx.state === 'running' && stream && !primerRef.current) {
+      try {
+        const src = ctx.createMediaStreamSource(stream)
+        const silentGain = ctx.createGain()
+        silentGain.gain.value = 0
+        src.connect(silentGain)
+        silentGain.connect(ctx.destination)
+        primerRef.current = { src, silentGain }
+      } catch (e) {}
+    }
   }, [])
 
   const reset = useCallback(() => {
@@ -226,6 +258,11 @@ export function useRecorder() {
   // Full teardown — release mic + close AudioContext (call on unmount)
   const destroy = useCallback(() => {
     cleanup()
+    if (primerRef.current) {
+      try { primerRef.current.src.disconnect() } catch (e) {}
+      try { primerRef.current.silentGain.disconnect() } catch (e) {}
+      primerRef.current = null
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null

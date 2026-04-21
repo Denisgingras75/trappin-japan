@@ -70,30 +70,15 @@ create policy "beats_insert" on beats for insert with check (auth.uid() = upload
 create policy "bp_select" on battle_participants for select using (true);
 create policy "bp_insert" on battle_participants for insert with check (auth.uid() = user_id);
 
--- Battles: participants can read, authenticated users can create
-create policy "battles_select" on battles for select using (
-  status = 'open' or
-  challenger_id = auth.uid() or
-  opponent_id = auth.uid() or
-  exists (select 1 from battle_participants where battle_id = id and user_id = auth.uid())
-);
+-- Battles: anyone with the share_code URL can read; auth users create/update
+create policy "battles_select" on battles for select using (true);
 create policy "battles_insert" on battles for insert with check (auth.uid() = challenger_id);
 create policy "battles_update" on battles for update using (
   status = 'open' and opponent_id is null
 );
 
--- Freestyles: battle participants can read, own user can insert
-create policy "freestyles_select" on freestyles for select using (
-  exists (
-    select 1 from battles
-    where battles.id = freestyles.battle_id
-    and (
-      battles.challenger_id = auth.uid() or
-      battles.opponent_id = auth.uid() or
-      exists (select 1 from battle_participants where battle_id = battles.id and user_id = auth.uid())
-    )
-  )
-);
+-- Freestyles: anyone with the battle link can listen; own user can insert
+create policy "freestyles_select" on freestyles for select using (true);
 create policy "freestyles_insert" on freestyles for insert with check (auth.uid() = user_id);
 
 -- Storage bucket (run manually in Supabase dashboard or via API)
