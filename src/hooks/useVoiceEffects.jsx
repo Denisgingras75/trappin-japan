@@ -100,7 +100,7 @@ function createCleanChain(ctx, source) {
   const boxCut = ctx.createBiquadFilter()
   boxCut.type = 'peaking'
   boxCut.frequency.value = 450
-  boxCut.gain.value = -3
+  boxCut.gain.value = -1.5
   boxCut.Q.value = 1.2
 
   const presence = ctx.createBiquadFilter()
@@ -189,7 +189,7 @@ function createStudioChain(ctx, source) {
   const boxCut = ctx.createBiquadFilter()
   boxCut.type = 'peaking'
   boxCut.frequency.value = 450
-  boxCut.gain.value = -3
+  boxCut.gain.value = -1.5
   boxCut.Q.value = 1.2
 
   const presence = ctx.createBiquadFilter()
@@ -214,14 +214,6 @@ function createStudioChain(ctx, source) {
   exciterDry.gain.value = 0.75
   const exciterMix = ctx.createGain()
 
-  // Stereo widener (Haas effect)
-  const splitter = ctx.createChannelSplitter(2)
-  const merger = ctx.createChannelMerger(2)
-  const delayL = ctx.createDelay()
-  delayL.delayTime.value = 0.0
-  const delayR = ctx.createDelay()
-  delayR.delayTime.value = 0.0006
-
   // Plate reverb (uses pre-computed impulse data)
   const convolver = ctx.createConvolver()
   convolver.buffer = createImpulseBuffer(ctx)
@@ -238,15 +230,15 @@ function createStudioChain(ctx, source) {
   reverbLpf.frequency.value = 6000
 
   const dryGain = ctx.createGain()
-  dryGain.gain.value = 0.82
+  dryGain.gain.value = 0.92
   const wetGain = ctx.createGain()
-  wetGain.gain.value = 0.18
+  wetGain.gain.value = 0.08
 
   // Slapback delay
   const slap = ctx.createDelay()
   slap.delayTime.value = 0.085
   const slapGain = ctx.createGain()
-  slapGain.gain.value = 0.10
+  slapGain.gain.value = 0.05
   const slapFilter = ctx.createBiquadFilter()
   slapFilter.type = 'lowpass'
   slapFilter.frequency.value = 3500
@@ -254,7 +246,7 @@ function createStudioChain(ctx, source) {
   const slap2 = ctx.createDelay()
   slap2.delayTime.value = 0.13
   const slapGain2 = ctx.createGain()
-  slapGain2.gain.value = 0.05
+  slapGain2.gain.value = 0.02
   const slapFilter2 = ctx.createBiquadFilter()
   slapFilter2.type = 'lowpass'
   slapFilter2.frequency.value = 2500
@@ -289,19 +281,16 @@ function createStudioChain(ctx, source) {
   air.connect(exciterDry)
   exciterDry.connect(exciterMix)
 
-  // Stereo widener
-  exciterMix.connect(splitter)
-  splitter.connect(delayL, 0)
-  splitter.connect(delayR, 1)
-  delayL.connect(merger, 0, 0)
-  delayR.connect(merger, 0, 1)
+  // No stereo widener — Haas on a mono mic source routes the signal through
+  // a 2-ch splitter that outputs silence on ch1, hard-panning voice to L and
+  // creating comb-filter hollowness when summed to mono on phone speakers.
 
   // Dry path
-  merger.connect(dryGain)
+  exciterMix.connect(dryGain)
   dryGain.connect(makeup)
 
   // Reverb path
-  merger.connect(preDelay)
+  exciterMix.connect(preDelay)
   preDelay.connect(reverbHpf)
   reverbHpf.connect(convolver)
   convolver.connect(reverbLpf)
@@ -309,12 +298,12 @@ function createStudioChain(ctx, source) {
   wetGain.connect(makeup)
 
   // Slapback delay
-  merger.connect(slap)
+  exciterMix.connect(slap)
   slap.connect(slapFilter)
   slapFilter.connect(slapGain)
   slapGain.connect(makeup)
 
-  merger.connect(slap2)
+  exciterMix.connect(slap2)
   slap2.connect(slapFilter2)
   slapFilter2.connect(slapGain2)
   slapGain2.connect(makeup)
@@ -328,8 +317,8 @@ function createStudioChain(ctx, source) {
 const PRESETS = { raw: createRawChain, clean: createCleanChain, studio: createStudioChain }
 
 export function useVoiceEffects() {
-  const createChain = useCallback((audioContext, source, preset = 'studio') => {
-    const builder = PRESETS[preset] || PRESETS.studio
+  const createChain = useCallback((audioContext, source, preset = 'clean') => {
+    const builder = PRESETS[preset] || PRESETS.clean
     return builder(audioContext, source)
   }, [])
 

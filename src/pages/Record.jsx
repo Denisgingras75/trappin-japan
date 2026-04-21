@@ -21,7 +21,7 @@ export default function Record() {
 
   const { user } = useAuth()
   const {
-    recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
+    recording, loading, audioBlob, duration, timeRemaining, micReady,
     start, stop, reset, cleanup, destroy, toggleMonitor
   } = useRecorder()
   const [saving, setSaving] = useState(false)
@@ -31,7 +31,7 @@ export default function Record() {
   const [selectedBeat, setSelectedBeat] = useState(beat)
   const [beats, setBeats] = useState([])
   const [heatLength, setHeatLength] = useState(90)
-  const [preset, setPreset] = useState('studio')
+  const [preset, setPreset] = useState('clean')
   const [beatVol, setBeatVol] = useState(0.7)
   const [beatBuffer, setBeatBuffer] = useState(null)
   const [beatLoading, setBeatLoading] = useState(false)
@@ -377,25 +377,6 @@ export default function Record() {
         </div>
       )}
 
-      {/* Live transcript while recording */}
-      {recording && transcript && (
-        <div style={{
-          width: '100%',
-          padding: '8px 12px',
-          background: 'rgba(255,255,255,0.03)',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: '0.75rem',
-          color: 'var(--color-text-muted)',
-          fontFamily: 'var(--font-mono)',
-          maxHeight: 80,
-          overflow: 'hidden',
-          textAlign: 'center',
-          lineHeight: 1.4
-        }}>
-          {transcript}
-        </div>
-      )}
-
       <button
         className={`btn-record ${recording ? 'recording' : ''}`}
         onClick={handleRecord}
@@ -411,20 +392,6 @@ export default function Record() {
             <AudioPlayer src={blobUrl} beatSrc={selectedBeat.audio_url} />
           </div>
 
-          {/* Transcript */}
-          {transcript && (
-            <div className="card">
-              <div className="beat-meta" style={{ marginBottom: 8 }}>Transcript</div>
-              <div style={{
-                fontSize: '0.8rem',
-                lineHeight: 1.5,
-                color: 'var(--color-text)',
-                fontFamily: 'var(--font-mono)'
-              }}>
-                {transcript}
-              </div>
-            </div>
-          )}
 
           {/* Tag targets (when in a battle) */}
           {battleId && participants.length > 0 && (
