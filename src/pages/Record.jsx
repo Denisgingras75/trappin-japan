@@ -22,7 +22,7 @@ export default function Record() {
   const { user } = useAuth()
   const {
     recording, loading, audioBlob, duration, timeRemaining, transcript, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor, setBeatVolume
+    start, stop, reset, cleanup, destroy, toggleMonitor
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
@@ -37,15 +37,19 @@ export default function Record() {
   const [beatLoading, setBeatLoading] = useState(false)
   const [targets, setTargets] = useState([])
   const [participants, setParticipants] = useState([])
+  // Beat playback lives in its OWN AudioContext — isolated from the mic /
+  // effects / MediaRecorder pipeline so the mic-side CPU load can't starve
+  // the beat's audio thread (that was the mid-playback sputter).
   const beatCtxRef = useRef(null)
+  const beatGainRef = useRef(null)
+  const beatSourceRef = useRef(null)
   const blobUrl = useMemo(() => {
     return audioBlob ? URL.createObjectURL(audioBlob) : null
   }, [audioBlob])
 
-  // Decode the beat to an AudioBuffer as soon as it's selected. The BufferSource
-  // in useRecorder plays it back instantly on Rec tap — no network fetch, no
-  // MediaElement seek latency, no OS audio-session switch. This is the fix
-  // for the record-start lag.
+  // Decode the beat into an AudioBuffer as soon as it's selected. The
+  // BufferSource plays instantly on Rec tap — no network fetch, no
+  // MediaElement seek latency. This is in the SAME context we'll play on.
   useEffect(() => {
     if (!selectedBeat?.audio_url) return
     let cancelled = false
@@ -55,6 +59,10 @@ export default function Record() {
       try {
         if (!beatCtxRef.current || beatCtxRef.current.state === 'closed') {
           beatCtxRef.current = new AudioContext({ sampleRate: 48000 })
+          const g = beatCtxRef.current.createGain()
+          g.gain.value = beatVol
+          g.connect(beatCtxRef.current.destination)
+          beatGainRef.current = g
         }
         const res = await fetch(selectedBeat.audio_url)
         const arr = await res.arrayBuffer()
@@ -68,14 +76,31 @@ export default function Record() {
     return () => { cancelled = true }
   }, [selectedBeat?.audio_url])
 
+  const stopBeat = () => {
+    if (beatSourceRef.current) {
+      try { beatSourceRef.current.stop() } catch (e) {}
+      try { beatSourceRef.current.disconnect() } catch (e) {}
+      beatSourceRef.current = null
+    }
+  }
+
+  // Stop the beat when recording ends (heat timer, beat ran out, etc.)
+  const prevRecordingRef = useRef(false)
+  useEffect(() => {
+    if (prevRecordingRef.current && !recording) stopBeat()
+    prevRecordingRef.current = recording
+  }, [recording])
+
   // Full teardown on page leave
   useEffect(() => {
     return () => {
       destroy()
+      stopBeat()
       if (beatCtxRef.current && beatCtxRef.current.state !== 'closed') {
         beatCtxRef.current.close()
         beatCtxRef.current = null
       }
+      beatGainRef.current = null
     }
   }, [destroy])
 
@@ -107,17 +132,34 @@ export default function Record() {
   const handleRecord = async () => {
     if (recording) {
       stop()
+      stopBeat()
     } else {
-      if (!beatBuffer) return
+      if (!beatBuffer || !beatCtxRef.current) return
       if (headphones) setMonitoring(true)
-      await start(beatBuffer, { preset, heatLength, headphones, beatVolume: beatVol })
+
+      // Mic pipeline first — settles the OS audio session before the beat
+      // starts, so iOS doesn't mode-switch under a playing BufferSource.
+      await start({ preset, heatLength, headphones })
       if (headphones) toggleMonitor(true)
+
+      // Resume the beat context (user gesture) and fire the BufferSource.
+      // Separate context from the recorder → no CPU contention → no sputter.
+      const ctx = beatCtxRef.current
+      if (ctx.state === 'suspended') await ctx.resume()
+      const src = ctx.createBufferSource()
+      src.buffer = beatBuffer
+      src.connect(beatGainRef.current)
+      src.onended = () => { if (recording) stop() }
+      beatSourceRef.current = src
+      src.start(0)
     }
   }
 
   const handleBeatVolume = (val) => {
     setBeatVol(val)
-    setBeatVolume(val)
+    if (beatGainRef.current && beatCtxRef.current) {
+      beatGainRef.current.gain.setTargetAtTime(val, beatCtxRef.current.currentTime, 0.01)
+    }
   }
 
   const toggleTarget = (userId) => {
