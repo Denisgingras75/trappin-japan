@@ -5,6 +5,20 @@ import { useVoiceEffects } from './useVoiceEffects'
 // AudioContext so the mic/effects/MediaRecorder pipeline can't starve
 // the beat's audio thread (that was causing the mid-playback sputter).
 
+// echoCancellation is OFF on purpose. Android Chrome routes AEC-enabled
+// streams through VOICE_COMMUNICATION mode, which triggers the phone-call
+// notification + "call ended" popup. Since the beat isn't in the recording
+// (voice-only), bleed is minimal.
+const MIC_CONSTRAINTS = {
+  audio: {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    sampleRate: { ideal: 48000 },
+    channelCount: { ideal: 1 }
+  }
+}
+
 export function useRecorder() {
   const [recording, setRecording] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -22,21 +36,11 @@ export function useRecorder() {
   const streamRef = useRef(null)
   const { createChain } = useVoiceEffects()
 
-  const lastHeadphonesRef = useRef(null)
-
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: { ideal: 48000 },
-            channelCount: { ideal: 1 }
-          }
-        })
+        const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS)
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
         setMicReady(true)
@@ -50,23 +54,12 @@ export function useRecorder() {
     if (mediaRecorder.current?.state === 'recording') return
     setLoading(true)
 
-    const ecChanged = lastHeadphonesRef.current !== null && lastHeadphonesRef.current !== headphones
     const needNewStream = !streamRef.current
       || streamRef.current.getTracks().some(t => t.readyState === 'ended')
-      || ecChanged
     if (needNewStream) {
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
-      streamRef.current = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: !headphones,
-          noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: { ideal: 48000 },
-          channelCount: { ideal: 1 }
-        }
-      })
+      streamRef.current = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS)
     }
-    lastHeadphonesRef.current = headphones
     const stream = streamRef.current
 
     let audioCtx = audioCtxRef.current
