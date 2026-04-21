@@ -249,6 +249,9 @@ export default function Record() {
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
+      <div className="beat-meta" style={{ fontSize: '0.6rem', opacity: 0.5 }}>
+        build {typeof __BUILD_TAG__ !== 'undefined' ? __BUILD_TAG__ : 'dev'}
+      </div>
 
       {/* Settings — visible when not actively recording */}
       {!recording && (
