@@ -11,6 +11,9 @@ create table beats (
   bpm integer,
   mood text,
   energy text,
+  duration_ms integer,                     -- beat length = max take length
+  gain_db numeric not null default 0,      -- loudness trim so beats play at even levels
+  lead_in_ms integer not null default 0,   -- dead air skipped at the start
   created_at timestamptz default now()
 );
 
@@ -46,6 +49,8 @@ create table freestyles (
   targets uuid[] default '{}',
   beat_id uuid references beats(id),          -- beat this round was recorded over (null = battle's beat)
   beat_offset_ms integer not null default 0,  -- voice lag behind the beat; playback delays the beat by this
+  beat_start_ms integer not null default 0,   -- where in the beat file the take began
+  voice_gain_db numeric,                      -- playback trim that levels the voice (null = old fixed mix)
   duration_ms integer,
   created_at timestamptz default now()
 );

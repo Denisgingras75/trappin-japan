@@ -13,6 +13,9 @@ import { useVoiceEffects } from './useVoiceEffects'
 // record forever (and the upload stays well under storage limits).
 export const MAX_RECORD_SECONDS = 20 * 60
 
+// Frames quieter than this (-45 dBFS) don't count toward a take's level.
+const VOICED_FLOOR = Math.pow(10, -45 / 10)
+
 const MIC_CONSTRAINTS = {
   audio: {
     echoCancellation: false,
@@ -41,6 +44,8 @@ export function useRecorder() {
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
   const nodesRef = useRef([])
+  const levelRef = useRef({ sum: 0, n: 0 })
+  const [levelDb, setLevelDb] = useState(null)
   const { createChain } = useVoiceEffects()
 
   useEffect(() => {
@@ -110,7 +115,14 @@ export function useRecorder() {
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
-    nodesRef.current = [micSource, effectsOutput, monitorGain]
+
+    // Meter the processed voice so playback can balance it against the beat.
+    const analyser = audioCtx.createAnalyser()
+    analyser.fftSize = 2048
+    effectsOutput.connect(analyser)
+    const meterBuf = new Float32Array(analyser.fftSize)
+    levelRef.current = { sum: 0, n: 0 }
+    nodesRef.current = [micSource, effectsOutput, monitorGain, analyser]
 
     let mimeType = 'audio/webm;codecs=opus'
     if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
@@ -130,6 +142,8 @@ export function useRecorder() {
     recorder.onstop = () => {
       const blob = new Blob(chunks.current, { type: recorder.mimeType || mimeType || 'audio/webm' })
       setDurationMs(Date.now() - startTimeRef.current)
+      const { sum, n } = levelRef.current
+      setLevelDb(n >= 5 ? 10 * Math.log10(sum / n) : null)
       setAudioBlob(blob)
       setRecording(false)
       setTimeout(() => cleanup(), 150)
@@ -146,7 +160,7 @@ export function useRecorder() {
     startTimeRef.current = Date.now()
     if (onStart) { try { onStart() } catch (e) {} }
 
-    const limit = heatLength || MAX_RECORD_SECONDS
+    const limit = Math.min(heatLength || MAX_RECORD_SECONDS, MAX_RECORD_SECONDS)
     setRecording(true)
     setLoading(false)
     setAudioBlob(null)
@@ -158,8 +172,14 @@ export function useRecorder() {
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
       setDuration(elapsed)
+      // Average power of the moments with voice in them (silence is skipped).
+      analyser.getFloatTimeDomainData(meterBuf)
+      let sq = 0
+      for (let i = 0; i < meterBuf.length; i++) sq += meterBuf[i] * meterBuf[i]
+      sq /= meterBuf.length
+      if (sq > VOICED_FLOOR) { levelRef.current.sum += sq; levelRef.current.n += 1 }
       if (heatLength) setTimeRemaining(Math.max(heatLength - elapsed, 0))
-    }, 200)
+    }, 100)
 
     countdownRef.current = setTimeout(() => {
       if (mediaRecorder.current?.state === 'recording') {
@@ -221,7 +241,7 @@ export function useRecorder() {
   }, [cleanup])
 
   return {
-    recording, loading, audioBlob, duration, durationMs, timeRemaining, micReady, error,
+    recording, loading, audioBlob, duration, durationMs, levelDb, timeRemaining, micReady, error,
     start, stop, reset, cleanup, destroy, toggleMonitor, getInputLatency
   }
 }

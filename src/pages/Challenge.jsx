@@ -138,6 +138,9 @@ export default function Challenge() {
             src={freestyle.audio_url}
             beatSrc={currentBeat?.audio_url}
             beatOffsetMs={freestyle.beat_offset_ms}
+            beatStartMs={freestyle.beat_start_ms}
+            beatGainDb={currentBeat?.gain_db}
+            voiceGainDb={freestyle.voice_gain_db}
             durationMs={freestyle.duration_ms}
           />
         ) : (

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { CATEGORIES, isPlayableBeat } from '../lib/beats'
+import { CATEGORIES, isPlayableBeat, formatLength } from '../lib/beats'
 import AudioPlayer from './AudioPlayer'
+import AddBeat from './AddBeat'
 
 // Searchable beat list with preview. Calls onPick(beat) when one is chosen.
 export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'Pick a Beat' }) {
@@ -9,6 +10,7 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
   const [category, setCategory] = useState('all')
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 300)
@@ -18,9 +20,9 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
   useEffect(() => {
     let cancelled = false
     let query = supabase.from('beats').select('*')
-      .order('is_curated', { ascending: false })
+      .order('created_at', { ascending: false })
       .order('title', { ascending: true })
-      .limit(200)
+      .limit(300)
     if (category !== 'all') query = query.eq('category', category)
     if (debounced) query = query.ilike('title', `%${debounced}%`)
     query.then(({ data }) => {
@@ -41,9 +43,15 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
         )}
       </div>
 
+      <button className="link-btn" onClick={() => setShowAdd(!showAdd)} style={{ marginBottom: 8 }}>
+        {showAdd ? 'Close' : '+ Add your own beat'}
+      </button>
+      {showAdd && <AddBeat onAdded={onPick} />}
+
       <input
         type="text"
         placeholder="Search beats..."
+
         value={search}
         onChange={e => setSearch(e.target.value)}
         className="text-input"
@@ -71,7 +79,8 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="beat-title">{b.title}</div>
               <div className="beat-meta">
-                {b.is_curated ? b.category || 'Curated' : 'Community'}
+                {b.is_curated ? b.category || 'Curated' : 'Added by people'}
+                {b.duration_ms ? ` · ${formatLength(b.duration_ms)}` : ''}
                 {b.id === currentBeatId && ' · current'}
               </div>
             </div>
@@ -81,7 +90,7 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            <AudioPlayer src={b.audio_url} preload="none" />
+            <AudioPlayer src={b.audio_url} preload="none" gainDb={b.gain_db} durationMs={b.duration_ms} />
           </div>
         </div>
       ))}
