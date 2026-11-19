@@ -107,6 +107,8 @@ export default function BattleThread() {
                 src={round.audio_url}
                 beatSrc={rBeat?.audio_url}
                 beatOffsetMs={round.beat_offset_ms}
+                beatStartMs={round.beat_start_ms}
+                beatGainDb={rBeat?.gain_db}
                 durationMs={round.duration_ms}
                 accent={isMine}
               />

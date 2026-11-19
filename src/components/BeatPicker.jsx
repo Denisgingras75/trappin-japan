@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { CATEGORIES, isPlayableBeat } from '../lib/beats'
+import { CATEGORIES, isPlayableBeat, formatLength } from '../lib/beats'
 import AudioPlayer from './AudioPlayer'
 
 // Searchable beat list with preview. Calls onPick(beat) when one is chosen.
@@ -72,6 +72,7 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
               <div className="beat-title">{b.title}</div>
               <div className="beat-meta">
                 {b.is_curated ? b.category || 'Curated' : 'Community'}
+                {b.duration_ms ? ` · ${formatLength(b.duration_ms)}` : ''}
                 {b.id === currentBeatId && ' · current'}
               </div>
             </div>
@@ -81,7 +82,7 @@ export default function BeatPicker({ onPick, onCancel, currentBeatId, title = 'P
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            <AudioPlayer src={b.audio_url} preload="none" />
+            <AudioPlayer src={b.audio_url} preload="none" gainDb={b.gain_db} durationMs={b.duration_ms} />
           </div>
         </div>
       ))}

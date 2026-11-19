@@ -5,16 +5,8 @@ import { useRecorder } from '../hooks/useRecorder'
 import { useAuth } from '../hooks/useAuth'
 import AudioPlayer, { stopAllPlayers } from '../components/AudioPlayer'
 import BeatPicker from '../components/BeatPicker'
-import { isPlayableBeat } from '../lib/beats'
+import { isPlayableBeat, beatGain, formatLength } from '../lib/beats'
 
-// null = no limit: rap until you hit Stop.
-const HEAT_LENGTHS = [
-  { value: 60, label: '60s' },
-  { value: 90, label: '90s' },
-  { value: 120, label: '2 min' },
-  { value: 180, label: '3 min' },
-  { value: null, label: 'No limit' }
-]
 const NUDGE_KEY = 'tj_sync_nudge_ms'
 const readNudge = () => {
   try { return parseInt(localStorage.getItem(NUDGE_KEY), 10) || 0 } catch (e) { return 0 }
@@ -62,9 +54,9 @@ export default function Record() {
   // How far the recorded voice lags the beat (device audio latency), plus
   // the user's own fine-tune, remembered per device.
   const [latencyMs, setLatencyMs] = useState(0)
+  const [beatStartMs, setBeatStartMs] = useState(0)
   const [nudgeMs, setNudgeMs] = useState(readNudge)
   const wakeLockRef = useRef(null)
-  const [heatLength, setHeatLength] = useState(90)
   const [preset, setPreset] = useState('clean')
   const [beatVol, setBeatVol] = useState(0.7)
   const [beatBuffer, setBeatBuffer] = useState(null)
@@ -95,7 +87,7 @@ export default function Record() {
         if (!beatCtxRef.current || beatCtxRef.current.state === 'closed') {
           beatCtxRef.current = new AudioContext({ sampleRate: 48000 })
           const g = beatCtxRef.current.createGain()
-          g.gain.value = beatVol
+          g.gain.value = beatVol * beatGain(selectedBeat)
           g.connect(beatCtxRef.current.destination)
           beatGainRef.current = g
         }
@@ -111,6 +103,19 @@ export default function Record() {
     })()
     return () => { cancelled = true }
   }, [selectedBeat?.audio_url])
+
+  // Beat level = the slider × this beat's loudness trim.
+  useEffect(() => {
+    if (beatGainRef.current && beatCtxRef.current) {
+      beatGainRef.current.gain.setTargetAtTime(
+        beatVol * beatGain(selectedBeat), beatCtxRef.current.currentTime, 0.01)
+    }
+  }, [beatVol, selectedBeat, beatBuffer])
+
+  // Dead air at the top of the file is skipped, and the take can run for
+  // whatever is left of the beat — the beat's length is the limit.
+  const leadInSec = Math.min((selectedBeat?.lead_in_ms || 0) / 1000, beatBuffer ? beatBuffer.duration / 2 : 0)
+  const takeLimitSec = beatBuffer ? Math.max(Math.floor(beatBuffer.duration - leadInSec), 1) : null
 
   const stopBeat = () => {
     if (beatSourceRef.current) {
@@ -190,20 +195,21 @@ export default function Record() {
       // The beat context is resumed before recording begins, then the beat
       // and the recorder start in the same tick so they share a zero point.
       // Separate context from the recorder → no CPU contention → no sputter.
-      // The beat loops, so its length never cuts a take short.
+      // The beat plays once: when it ends, the take ends.
       const ok = await start({
         preset,
-        heatLength,
+        heatLength: takeLimitSec,
         beforeStart: async () => {
           if (ctx.state === 'suspended') await ctx.resume()
         },
         onStart: () => {
           const src = ctx.createBufferSource()
           src.buffer = beatBuffer
-          src.loop = true
+          src.onended = () => { if (beatSourceRef.current === src) stop() }
           src.connect(beatGainRef.current)
           beatSourceRef.current = src
-          src.start(0)
+          src.start(0, leadInSec)
+          setBeatStartMs(Math.round(leadInSec * 1000))
           // The rapper hears the beat late (output latency) and the mic
           // hears the rapper late (input latency), so the voice sits that
           // far behind the beat in the take. Playback holds the beat back
@@ -236,9 +242,6 @@ export default function Record() {
 
   const handleBeatVolume = (val) => {
     setBeatVol(val)
-    if (beatGainRef.current && beatCtxRef.current) {
-      beatGainRef.current.gain.setTargetAtTime(val, beatCtxRef.current.currentTime, 0.01)
-    }
   }
 
   const toggleTarget = (userId) => {
@@ -254,6 +257,7 @@ export default function Record() {
       ...row,
       beat_id: selectedBeat.id,
       beat_offset_ms: beatOffsetMs,
+      beat_start_ms: beatStartMs,
       duration_ms: durationMs || null
     })
     if (error && (error.code === 'PGRST204' || error.code === '42703')) {
@@ -351,6 +355,7 @@ export default function Record() {
       <h2>{selectedBeat.title}</h2>
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
+        {takeLimitSec ? ` \u00b7 up to ${formatLength(takeLimitSec * 1000)}` : ''}
       </div>
       {!recording && !audioBlob && (
         <button className="link-btn" onClick={() => { stopBeat(); setPicking(true) }}>
@@ -364,21 +369,6 @@ export default function Record() {
       {/* Settings — visible when not actively recording */}
       {!recording && (
         <div className="record-settings">
-          <div className="setting-group">
-            <div className="setting-label">Heat</div>
-            <div className="setting-options">
-              {HEAT_LENGTHS.map(h => (
-                <button
-                  key={h.label}
-                  className={`setting-btn ${heatLength === h.value ? 'active' : ''}`}
-                  onClick={() => setHeatLength(h.value)}
-                >
-                  {h.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="setting-group">
             <div className="setting-label">Voice FX</div>
             <div className="setting-options">
@@ -484,7 +474,7 @@ export default function Record() {
           marginTop: -12,
           transition: 'color 0.3s'
         }}>
-          {timeRemaining != null ? `${formatTime(timeRemaining)} remaining` : 'No limit — hit Stop when you\'re done'}
+          {timeRemaining != null ? `${formatTime(timeRemaining)} of beat left` : ''}
         </div>
       )}
       {micError && !recording && <div className="form-error">{micError}</div>}
@@ -505,6 +495,8 @@ export default function Record() {
               src={blobUrl}
               beatSrc={selectedBeat.audio_url}
               beatOffsetMs={beatOffsetMs}
+              beatStartMs={beatStartMs}
+              beatGainDb={selectedBeat.gain_db}
               durationMs={durationMs}
             />
             <div className="setting-group" style={{ marginTop: 12, justifyContent: 'center' }}>

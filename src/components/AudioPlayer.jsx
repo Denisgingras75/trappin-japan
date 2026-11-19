@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from 'react'
 // Voice-only (no beatSrc) plays voice at default 1.0.
 const BEAT_VOLUME = 0.60
 const VOICE_VOLUME = 0.40
+// A lone track leaves headroom so quiet beats can be trimmed *up* to match.
+const SOLO_VOLUME = 0.63
 
 // How far the beat may wander from where it should be before we re-seek it.
 const DRIFT_TOLERANCE = 0.08
@@ -25,7 +27,12 @@ export function stopAllPlayers() {
 // beatOffsetMs: how far the voice lags the beat in the recording (device
 //   latency) — the beat is held back by this much so they line up.
 // durationMs: known length of src; MediaRecorder files often report none.
-export default function AudioPlayer({ src, beatSrc, beatOffsetMs = 0, durationMs, accent, preload = 'metadata' }) {
+// beatStartMs: where in the beat file the take began (skipped lead-in).
+// gainDb / beatGainDb: loudness trim for src (a lone beat) / for beatSrc.
+export default function AudioPlayer({
+  src, beatSrc, beatOffsetMs = 0, beatStartMs = 0, durationMs,
+  gainDb = 0, beatGainDb = 0, accent, preload = 'metadata'
+}) {
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
   const [dur, setDur] = useState(0)
@@ -34,6 +41,8 @@ export default function AudioPlayer({ src, beatSrc, beatOffsetMs = 0, durationMs
   const beatRef = useRef(null)
   const offsetRef = useRef(0)
   offsetRef.current = (beatOffsetMs || 0) / 1000
+  const beatStartRef = useRef(0)
+  beatStartRef.current = (beatStartMs || 0) / 1000
   const stopRef = useRef(null)
   const unlockedRef = useRef(null)
   const fixesRef = useRef(0)
@@ -55,6 +64,7 @@ export default function AudioPlayer({ src, beatSrc, beatOffsetMs = 0, durationMs
       if (!beat.paused) beat.pause()
       return
     }
+    target += beatStartRef.current
     const beatDur = beat.duration
     const loops = isFinite(beatDur) && beatDur > 0
     const wrap = (t) => loops ? ((t % beatDur) + beatDur) % beatDur : Math.max(t, 0)
@@ -140,9 +150,13 @@ export default function AudioPlayer({ src, beatSrc, beatOffsetMs = 0, durationMs
 
   // 60/40 instrumental-to-vocal mix when both tracks are present
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = beatSrc ? VOICE_VOLUME : 1
-    if (beatRef.current) beatRef.current.volume = BEAT_VOLUME
-  }, [beatSrc, src])
+    const lin = (db) => Math.pow(10, (Number(db) || 0) / 20)
+    const clamp = (v) => Math.min(Math.max(v, 0), 1)
+    if (audioRef.current) {
+      audioRef.current.volume = beatSrc ? VOICE_VOLUME : clamp(SOLO_VOLUME * lin(gainDb))
+    }
+    if (beatRef.current) beatRef.current.volume = clamp(BEAT_VOLUME * lin(beatGainDb))
+  }, [beatSrc, src, gainDb, beatGainDb])
 
   // While playing, keep the beat locked to the voice.
   useEffect(() => {

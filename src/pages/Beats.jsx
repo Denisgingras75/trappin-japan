@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import AudioPlayer from '../components/AudioPlayer'
-import { CATEGORIES, isPlayableBeat } from '../lib/beats'
+import { CATEGORIES, isPlayableBeat, formatLength } from '../lib/beats'
 
 export default function Beats() {
   const [beats, setBeats] = useState([])
@@ -271,6 +271,7 @@ export default function Beats() {
               <div className="beat-title">{beat.title}</div>
               <div className="beat-meta">
                 {beat.is_curated ? beat.category || 'Curated' : 'Community'}
+                {beat.duration_ms ? ` · ${formatLength(beat.duration_ms)}` : ''}
                 {beat.bpm && ` · ${beat.bpm} BPM`}
                 {beat.mood && ` · ${beat.mood}`}
               </div>
@@ -281,7 +282,7 @@ export default function Beats() {
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            <AudioPlayer src={beat.audio_url} preload="none" />
+            <AudioPlayer src={beat.audio_url} preload="none" gainDb={beat.gain_db} durationMs={beat.duration_ms} />
           </div>
         </div>
       ))}

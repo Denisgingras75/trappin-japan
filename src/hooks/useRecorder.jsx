@@ -146,7 +146,7 @@ export function useRecorder() {
     startTimeRef.current = Date.now()
     if (onStart) { try { onStart() } catch (e) {} }
 
-    const limit = heatLength || MAX_RECORD_SECONDS
+    const limit = Math.min(heatLength || MAX_RECORD_SECONDS, MAX_RECORD_SECONDS)
     setRecording(true)
     setLoading(false)
     setAudioBlob(null)

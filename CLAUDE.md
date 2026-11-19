@@ -22,7 +22,7 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 ## Goals / Roadmap
 - [x] Voice-only recording (no speaker bleed)
 - [x] FX presets (Raw / Clean / Studio)
-- [x] Heat timer (60 / 90 / 120 / 180s / no limit, capped at 20 min)
+- [x] Take length = beat length (no heat picker; beat plays once and ends the take)
 - [x] Headphones / speakers mode
 - [x] Group battles (2+ people)
 - [x] Tagging targets ("who you dissing")
@@ -59,7 +59,7 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 | Schema reference | supabase/schema.sql |
 
 ## Database
-- `beats` — title, audio_url, category, bpm, mood, energy
+- `beats` — title, audio_url, category, bpm, mood, energy, duration_ms, gain_db (loudness trim), lead_in_ms (skipped dead air)
 - `battles` — challenger_id, beat_id, share_code, status, max_participants
 - `battle_participants` — battle_id, user_id, role (creator/participant)
-- `freestyles` — battle_id, user_id, audio_url, round_number, targets[], beat_id, beat_offset_ms, duration_ms
+- `freestyles` — battle_id, user_id, audio_url, round_number, targets[], beat_id, beat_offset_ms, beat_start_ms, duration_ms
