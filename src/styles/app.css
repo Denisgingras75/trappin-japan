@@ -815,3 +815,8 @@ h2 {
 }
 .btn-big { padding: 18px; font-size: 1.1rem; }
 .link-btn:disabled { opacity: 0.5; }
+
+/* A long beat name must never push the action button off screen. */
+.beat-row > :first-child { min-width: 0; }
+.beat-row > .btn { flex-shrink: 0; }
+.record-page h2 { max-width: 100%; overflow-wrap: anywhere; }
