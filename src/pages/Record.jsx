@@ -3,9 +3,29 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useRecorder } from '../hooks/useRecorder'
 import { useAuth } from '../hooks/useAuth'
-import AudioPlayer from '../components/AudioPlayer'
+import AudioPlayer, { stopAllPlayers } from '../components/AudioPlayer'
+import BeatPicker from '../components/BeatPicker'
+import { isPlayableBeat } from '../lib/beats'
 
-const HEAT_LENGTHS = [60, 90, 120, 180]
+// null = no limit: rap until you hit Stop.
+const HEAT_LENGTHS = [
+  { value: 60, label: '60s' },
+  { value: 90, label: '90s' },
+  { value: 120, label: '2 min' },
+  { value: 180, label: '3 min' },
+  { value: null, label: 'No limit' }
+]
+const NUDGE_KEY = 'tj_sync_nudge_ms'
+const readNudge = () => {
+  try { return parseInt(localStorage.getItem(NUDGE_KEY), 10) || 0 } catch (e) { return 0 }
+}
+
+const newShareCode = () => {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'
+  const bytes = crypto.getRandomValues(new Uint8Array(8))
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join('')
+}
+
 const FX_PRESETS = [
   { key: 'raw', label: 'Raw', desc: 'No processing' },
   { key: 'clean', label: 'Clean', desc: 'Polish + clarity' },
@@ -21,15 +41,29 @@ export default function Record() {
 
   const { user } = useAuth()
   const {
-    recording, loading, audioBlob, duration, timeRemaining, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor
+    recording, loading, audioBlob, duration, durationMs, timeRemaining, error: micError,
+    start, stop, reset, destroy, toggleMonitor, getInputLatency
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
-  const [headphones, setHeadphones] = useState(false)
+  // Remembered per device — most people record the same way every time.
+  const [headphones, setHeadphonesState] = useState(() => {
+    try { return localStorage.getItem('tj_headphones') === '1' } catch (e) { return false }
+  })
+  const setHeadphones = (on) => {
+    setHeadphonesState(on)
+    try { localStorage.setItem('tj_headphones', on ? '1' : '0') } catch (e) {}
+  }
   const [shareCode, setShareCode] = useState(null)
-  const [selectedBeat, setSelectedBeat] = useState(beat)
-  const [beats, setBeats] = useState([])
+  const [copied, setCopied] = useState(false)
+  const [selectedBeat, setSelectedBeat] = useState(isPlayableBeat(beat) ? beat : null)
+  const [picking, setPicking] = useState(!!location.state?.pickBeat || !isPlayableBeat(beat))
+  const [saveError, setSaveError] = useState(null)
+  // How far the recorded voice lags the beat (device audio latency), plus
+  // the user's own fine-tune, remembered per device.
+  const [latencyMs, setLatencyMs] = useState(0)
+  const [nudgeMs, setNudgeMs] = useState(readNudge)
+  const wakeLockRef = useRef(null)
   const [heatLength, setHeatLength] = useState(90)
   const [preset, setPreset] = useState('clean')
   const [beatVol, setBeatVol] = useState(0.7)
@@ -53,6 +87,7 @@ export default function Record() {
   useEffect(() => {
     if (!selectedBeat?.audio_url) return
     let cancelled = false
+    stopBeat()
     setBeatLoading(true)
     setBeatBuffer(null)
     ;(async () => {
@@ -65,6 +100,7 @@ export default function Record() {
           beatGainRef.current = g
         }
         const res = await fetch(selectedBeat.audio_url)
+        if (!res.ok) throw new Error('beat fetch failed')
         const arr = await res.arrayBuffer()
         const buf = await beatCtxRef.current.decodeAudioData(arr)
         if (cancelled) return
@@ -84,11 +120,26 @@ export default function Record() {
     }
   }
 
-  // Stop the beat when recording ends (heat timer, beat ran out, etc.)
+  // Stop the beat when recording ends (heat timer, mic lost, etc.)
   const prevRecordingRef = useRef(false)
   useEffect(() => {
     if (prevRecordingRef.current && !recording) stopBeat()
     prevRecordingRef.current = recording
+  }, [recording])
+
+  // Keep the screen awake during a take — a sleeping phone kills the mic.
+  useEffect(() => {
+    if (!recording) return
+    let released = false
+    navigator.wakeLock?.request('screen').then(lock => {
+      if (released) lock.release().catch(() => {})
+      else wakeLockRef.current = lock
+    }).catch(() => {})
+    return () => {
+      released = true
+      wakeLockRef.current?.release().catch(() => {})
+      wakeLockRef.current = null
+    }
   }, [recording])
 
   // Full teardown on page leave
@@ -115,13 +166,6 @@ export default function Record() {
     }
   }, [battleId])
 
-  useEffect(() => {
-    if (!selectedBeat) {
-      supabase.from('beats').select('*').order('created_at', { ascending: false }).limit(20)
-        .then(({ data }) => setBeats(data || []))
-    }
-  }, [selectedBeat])
-
   const formatTime = (s) => {
     if (s == null) return '--:--'
     const m = Math.floor(s / 60)
@@ -135,26 +179,59 @@ export default function Record() {
       stopBeat()
     } else {
       if (!beatBuffer || !beatCtxRef.current) return
-      if (headphones) setMonitoring(true)
+      // Nothing else may be making sound while the mic is open.
+      stopAllPlayers()
+      stopBeat()
+      setSaveError(null)
+      const ctx = beatCtxRef.current
 
       // Mic pipeline first — settles the OS audio session before the beat
       // starts, so iOS doesn't mode-switch under a playing BufferSource.
-      await start({ preset, heatLength, headphones })
-      if (headphones) toggleMonitor(true)
-
-      // Resume the beat context (user gesture) and fire the BufferSource.
+      // The beat context is resumed before recording begins, then the beat
+      // and the recorder start in the same tick so they share a zero point.
       // Separate context from the recorder → no CPU contention → no sputter.
-      // Loop the beat so short beats (under heat length) don't cut the
-      // recording short — the heat timer is the authoritative stop.
-      const ctx = beatCtxRef.current
-      if (ctx.state === 'suspended') await ctx.resume()
-      const src = ctx.createBufferSource()
-      src.buffer = beatBuffer
-      src.loop = true
-      src.connect(beatGainRef.current)
-      beatSourceRef.current = src
-      src.start(0)
+      // The beat loops, so its length never cuts a take short.
+      const ok = await start({
+        preset,
+        heatLength,
+        beforeStart: async () => {
+          if (ctx.state === 'suspended') await ctx.resume()
+        },
+        onStart: () => {
+          const src = ctx.createBufferSource()
+          src.buffer = beatBuffer
+          src.loop = true
+          src.connect(beatGainRef.current)
+          beatSourceRef.current = src
+          src.start(0)
+          // The rapper hears the beat late (output latency) and the mic
+          // hears the rapper late (input latency), so the voice sits that
+          // far behind the beat in the take. Playback holds the beat back
+          // by the same amount.
+          const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0) + getInputLatency()
+          setLatencyMs(Math.round(Math.min(Math.max(lat, 0), 0.5) * 1000))
+        }
+      })
+      // Hearing yourself through the browser arrives late (badly so on
+      // Bluetooth) and throws your timing, so it stays off unless asked for.
+      if (ok && headphones && monitoring) toggleMonitor(true)
     }
+  }
+
+  const beatOffsetMs = Math.min(Math.max(latencyMs + nudgeMs, 0), 1000)
+
+  const handleNudge = (delta) => {
+    setNudgeMs(prev => {
+      const next = Math.min(Math.max(prev + delta, -latencyMs), 600)
+      try { localStorage.setItem(NUDGE_KEY, String(next)) } catch (e) {}
+      return next
+    })
+  }
+
+  const pickBeat = (b) => {
+    stopAllPlayers()
+    setSelectedBeat(b)
+    setPicking(false)
   }
 
   const handleBeatVolume = (val) => {
@@ -170,78 +247,102 @@ export default function Record() {
     )
   }
 
-  const handleSave = async (mode) => {
-    if (!audioBlob || !selectedBeat) return
-    setSaving(true)
-
-    const user = (await supabase.auth.getUser()).data.user
-    const path = `freestyles/${user.id}/${Date.now()}.webm`
-
-    const { error: uploadError } = await supabase.storage.from('audio').upload(path, audioBlob)
-    if (uploadError) { setSaving(false); return }
-
-    const { data: { publicUrl } } = supabase.storage.from('audio').getPublicUrl(path)
-
-    if (battleId) {
-      await supabase.from('freestyles').insert({
-        battle_id: battleId,
-        user_id: user.id,
-        audio_url: publicUrl,
-        round_number: roundNumber || 2,
-        targets: targets.length > 0 ? targets : []
-      })
-      setSaving(false)
-      navigate(`/battles/${battleId}`)
-      return
+  // Insert a freestyle row. If the database hasn't got the per-round beat
+  // columns yet, fall back to the original shape so the take still lands.
+  const insertFreestyle = async (row) => {
+    const { error } = await supabase.from('freestyles').insert({
+      ...row,
+      beat_id: selectedBeat.id,
+      beat_offset_ms: beatOffsetMs,
+      duration_ms: durationMs || null
+    })
+    if (error && (error.code === 'PGRST204' || error.code === '42703')) {
+      return (await supabase.from('freestyles').insert(row)).error
     }
+    return error
+  }
 
-    if (mode === 'challenge') {
-      const code = Math.random().toString(36).slice(2, 8)
-      const { data: battle } = await supabase.from('battles').insert({
-        challenger_id: user.id,
-        beat_id: selectedBeat.id,
-        share_code: code,
-        status: 'open'
-      }).select().single()
+  const handleSave = async (mode) => {
+    if (!audioBlob || !selectedBeat || saving) return
+    stopAllPlayers()
+    setSaving(true)
+    setSaveError(null)
+    const fail = (msg) => { setSaveError(msg); setSaving(false) }
 
-      await supabase.from('battle_participants').insert({
-        battle_id: battle.id,
-        user_id: user.id,
-        role: 'creator'
-      })
+    try {
+      const user = (await supabase.auth.getUser()).data.user
+      if (!user) return fail('You got signed out — sign in again to send it')
 
-      await supabase.from('freestyles').insert({
-        battle_id: battle.id,
-        user_id: user.id,
-        audio_url: publicUrl,
-        round_number: 1,
-        targets: targets.length > 0 ? targets : []
-      })
+      const type = audioBlob.type || 'audio/webm'
+      const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'
+      const path = `freestyles/${user.id}/${Date.now()}.${ext}`
+      const { error: uploadError } = await supabase.storage.from('audio')
+        .upload(path, audioBlob, { contentType: type })
+      if (uploadError) return fail('Upload failed — check your connection and try again')
 
-      setShareCode(code)
-      setSaving(false)
-    } else {
-      setSaving(false)
-      reset()
+      const { data: { publicUrl } } = supabase.storage.from('audio').getPublicUrl(path)
+      const taggedTargets = targets.length > 0 ? targets : []
+
+      if (battleId) {
+        // Make sure we're in the battle (no-op if already joined).
+        await supabase.from('battle_participants').upsert(
+          { battle_id: battleId, user_id: user.id, role: 'participant' },
+          { onConflict: 'battle_id,user_id', ignoreDuplicates: true }
+        )
+        const error = await insertFreestyle({
+          battle_id: battleId,
+          user_id: user.id,
+          audio_url: publicUrl,
+          round_number: roundNumber || 2,
+          targets: taggedTargets
+        })
+        if (error) return fail('Could not send your response — try again')
+        setSaving(false)
+        navigate(`/battles/${battleId}`)
+        return
+      }
+
+      if (mode === 'challenge') {
+        const code = newShareCode()
+        const { data: battle, error: battleError } = await supabase.from('battles').insert({
+          challenger_id: user.id,
+          beat_id: selectedBeat.id,
+          share_code: code,
+          status: 'open'
+        }).select().single()
+        if (battleError || !battle) return fail('Could not create the challenge — try again')
+
+        await supabase.from('battle_participants').insert({
+          battle_id: battle.id,
+          user_id: user.id,
+          role: 'creator'
+        })
+
+        const error = await insertFreestyle({
+          battle_id: battle.id,
+          user_id: user.id,
+          audio_url: publicUrl,
+          round_number: 1,
+          targets: taggedTargets
+        })
+        if (error) return fail('Could not save your freestyle — try again')
+
+        setShareCode(code)
+        setSaving(false)
+      }
+    } catch (e) {
+      fail('Something went wrong — try again')
     }
   }
 
-  if (!selectedBeat) {
+  if (picking || !selectedBeat) {
     return (
-      <div>
-        <div className="page-header"><h1>Pick a Beat</h1></div>
-        {beats.length === 0 && (
-          <div className="empty">No beats yet. Upload some on the Beats page!</div>
-        )}
-        {beats.map(b => (
-          <div key={b.id} className="card beat-row" onClick={() => setSelectedBeat(b)} style={{ cursor: 'pointer' }}>
-            <div style={{ flex: 1 }}>
-              <div className="beat-title">{b.title}</div>
-              <div className="beat-meta">{b.is_curated ? 'Curated' : 'User upload'}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <BeatPicker
+        title={battleId ? 'Pick Your Beat' : 'Pick a Beat'}
+        currentBeatId={selectedBeat?.id}
+        onPick={pickBeat}
+        onCancel={selectedBeat ? () => setPicking(false) : null}
+      />
     )
   }
 
@@ -251,6 +352,11 @@ export default function Record() {
       <div className="beat-meta">
         {battleId ? `Round ${roundNumber} response` : 'Recording over this beat'}
       </div>
+      {!recording && !audioBlob && (
+        <button className="link-btn" onClick={() => { stopBeat(); setPicking(true) }}>
+          Change beat
+        </button>
+      )}
       <div className="beat-meta" style={{ fontSize: '0.6rem', opacity: 0.5 }}>
         build {typeof __BUILD_TAG__ !== 'undefined' ? __BUILD_TAG__ : 'dev'}
       </div>
@@ -261,13 +367,13 @@ export default function Record() {
           <div className="setting-group">
             <div className="setting-label">Heat</div>
             <div className="setting-options">
-              {HEAT_LENGTHS.map(len => (
+              {HEAT_LENGTHS.map(h => (
                 <button
-                  key={len}
-                  className={`setting-btn ${heatLength === len ? 'active' : ''}`}
-                  onClick={() => setHeatLength(len)}
+                  key={h.label}
+                  className={`setting-btn ${heatLength === h.value ? 'active' : ''}`}
+                  onClick={() => setHeatLength(h.value)}
                 >
-                  {len}s
+                  {h.label}
                 </button>
               ))}
             </div>
@@ -342,7 +448,7 @@ export default function Record() {
         }}>
           {headphones ? 'Headphones' : 'Speakers'}
         </div>
-        {recording && (
+        {headphones && (
           <button
             className="fx-badge"
             onClick={() => {
@@ -357,7 +463,7 @@ export default function Record() {
               color: monitoring ? 'var(--color-green)' : 'var(--color-text-muted)'
             }}
           >
-            {monitoring ? 'Monitor ON' : 'Monitor OFF'}
+            {monitoring ? 'Hear myself: ON' : 'Hear myself: OFF'}
           </button>
         )}
       </div>
@@ -370,17 +476,18 @@ export default function Record() {
 
       {/* Timer */}
       <div className="record-timer">{formatTime(duration)}</div>
-      {recording && timeRemaining != null && (
+      {recording && (
         <div style={{
           fontSize: '0.75rem',
-          color: timeRemaining <= 10 ? 'var(--color-red)' : 'var(--color-text-muted)',
+          color: timeRemaining != null && timeRemaining <= 10 ? 'var(--color-red)' : 'var(--color-text-muted)',
           fontFamily: 'var(--font-mono)',
           marginTop: -12,
           transition: 'color 0.3s'
         }}>
-          {formatTime(timeRemaining)} remaining
+          {timeRemaining != null ? `${formatTime(timeRemaining)} remaining` : 'No limit — hit Stop when you\'re done'}
         </div>
       )}
+      {micError && !recording && <div className="form-error">{micError}</div>}
 
       <button
         className={`btn-record ${recording ? 'recording' : ''}`}
@@ -394,7 +501,20 @@ export default function Record() {
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="card">
             <div className="beat-meta" style={{ marginBottom: 8 }}>Your freestyle ({preset} FX)</div>
-            <AudioPlayer src={blobUrl} beatSrc={selectedBeat.audio_url} />
+            <AudioPlayer
+              src={blobUrl}
+              beatSrc={selectedBeat.audio_url}
+              beatOffsetMs={beatOffsetMs}
+              durationMs={durationMs}
+            />
+            <div className="setting-group" style={{ marginTop: 12, justifyContent: 'center' }}>
+              <div className="setting-label" style={{ minWidth: 0 }}>Off beat?</div>
+              <button className="setting-btn" onClick={() => handleNudge(-20)}>Voice later</button>
+              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', minWidth: 44, textAlign: 'center' }}>
+                {nudgeMs > 0 ? '+' : ''}{nudgeMs}ms
+              </span>
+              <button className="setting-btn" onClick={() => handleNudge(20)}>Voice earlier</button>
+            </div>
           </div>
 
 
@@ -420,7 +540,7 @@ export default function Record() {
           )}
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-secondary btn-full" onClick={reset}>Redo</button>
+            <button className="btn btn-secondary btn-full" onClick={() => { stopAllPlayers(); setSaveError(null); reset() }} disabled={saving}>Redo</button>
             <button
               className="btn btn-primary btn-full"
               onClick={() => handleSave(battleId ? 'respond' : 'challenge')}
@@ -429,6 +549,7 @@ export default function Record() {
               {saving ? 'Sending...' : battleId ? 'Send Response' : 'Challenge'}
             </button>
           </div>
+          {saveError && <div className="form-error">{saveError}</div>}
         </div>
       )}
 
@@ -444,7 +565,7 @@ export default function Record() {
                 const url = `${window.location.origin}/battle/${shareCode}`
                 const text = `I just dropped a freestyle on Trappin Japan. Think you can do better? ${url}`
                 if (navigator.share) {
-                  navigator.share({ title: 'Trappin Japan', text })
+                  navigator.share({ title: 'Trappin Japan', text }).catch(() => {})
                 } else {
                   window.open(`sms:?&body=${encodeURIComponent(text)}`, '_self')
                 }
@@ -456,13 +577,12 @@ export default function Record() {
             <button
               className="btn btn-secondary btn-full"
               onClick={() => {
-                navigator.clipboard.writeText(`${window.location.origin}/battle/${shareCode}`)
-                const btn = document.activeElement
-                btn.textContent = 'Copied!'
-                setTimeout(() => { btn.textContent = 'Copy Link' }, 2000)
+                navigator.clipboard?.writeText(`${window.location.origin}/battle/${shareCode}`)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 2000)
               }}
             >
-              Copy Link
+              {copied ? 'Copied!' : 'Copy Link'}
             </button>
 
             <button

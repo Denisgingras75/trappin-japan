@@ -44,6 +44,9 @@ create table freestyles (
   audio_url text not null,
   round_number integer not null default 1,
   targets uuid[] default '{}',
+  beat_id uuid references beats(id),          -- beat this round was recorded over (null = battle's beat)
+  beat_offset_ms integer not null default 0,  -- voice lag behind the beat; playback delays the beat by this
+  duration_ms integer,
   created_at timestamptz default now()
 );
 

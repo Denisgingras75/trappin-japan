@@ -9,6 +9,10 @@ import { useVoiceEffects } from './useVoiceEffects'
 // streams through VOICE_COMMUNICATION mode, which triggers the phone-call
 // notification + "call ended" popup. Since the beat isn't in the recording
 // (voice-only), bleed is minimal.
+// "No limit" heats still stop eventually so a forgotten phone doesn't
+// record forever (and the upload stays well under storage limits).
+export const MAX_RECORD_SECONDS = 20 * 60
+
 const MIC_CONSTRAINTS = {
   audio: {
     echoCancellation: false,
@@ -24,8 +28,10 @@ export function useRecorder() {
   const [loading, setLoading] = useState(false)
   const [audioBlob, setAudioBlob] = useState(null)
   const [duration, setDuration] = useState(0)
+  const [durationMs, setDurationMs] = useState(0)
   const [timeRemaining, setTimeRemaining] = useState(null)
   const [micReady, setMicReady] = useState(false)
+  const [error, setError] = useState(null)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const timerRef = useRef(null)
@@ -34,6 +40,7 @@ export function useRecorder() {
   const audioCtxRef = useRef(null)
   const monitorRef = useRef(null)
   const streamRef = useRef(null)
+  const nodesRef = useRef([])
   const { createChain } = useVoiceEffects()
 
   useEffect(() => {
@@ -50,26 +57,47 @@ export function useRecorder() {
     return () => { cancelled = true }
   }, [])
 
-  const start = useCallback(async ({ preset = 'clean', heatLength = 90, headphones = false } = {}) => {
-    if (mediaRecorder.current?.state === 'recording') return
+  // heatLength: seconds, or null for "no limit" (capped at MAX_RECORD_SECONDS).
+  // beforeStart: awaited once the mic pipeline is up, right before recording.
+  // onStart: called synchronously in the same tick the recorder starts —
+  //   the beat is started there so voice and beat share a zero point.
+  // Returns true if recording actually started.
+  const start = useCallback(async ({ preset = 'clean', heatLength = 90, beforeStart, onStart } = {}) => {
+    if (mediaRecorder.current?.state === 'recording') return false
     setLoading(true)
+    setError(null)
 
-    const needNewStream = !streamRef.current
-      || streamRef.current.getTracks().some(t => t.readyState === 'ended')
-    if (needNewStream) {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
-      streamRef.current = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS)
-    }
-    const stream = streamRef.current
+    let stream, audioCtx
+    try {
+      const needNewStream = !streamRef.current
+        || streamRef.current.getTracks().some(t => t.readyState === 'ended')
+      if (needNewStream) {
+        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS)
+        setMicReady(true)
+      }
+      stream = streamRef.current
 
-    let audioCtx = audioCtxRef.current
-    if (!audioCtx || audioCtx.state === 'closed') {
-      audioCtx = new AudioContext({ sampleRate: 48000 })
-      audioCtxRef.current = audioCtx
+      audioCtx = audioCtxRef.current
+      if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new AudioContext({ sampleRate: 48000 })
+        audioCtxRef.current = audioCtx
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume()
+      }
+      if (beforeStart) await beforeStart()
+    } catch (e) {
+      setLoading(false)
+      setError(e?.name === 'NotAllowedError' || e?.name === 'NotFoundError'
+        ? 'Mic blocked — allow microphone access and try again'
+        : 'Could not start recording — try again')
+      return false
     }
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume()
-    }
+
+    // Drop the previous take's graph so old effect chains don't pile up
+    // on the mic (each take used to leave its chain connected).
+    nodesRef.current.forEach(n => { try { n.disconnect() } catch (e) {} })
 
     const micSource = audioCtx.createMediaStreamSource(stream)
     const effectsOutput = createChain(audioCtx, micSource, preset)
@@ -82,13 +110,14 @@ export function useRecorder() {
     effectsOutput.connect(monitorGain)
     monitorGain.connect(audioCtx.destination)
     monitorRef.current = monitorGain
+    nodesRef.current = [micSource, effectsOutput, monitorGain]
 
     let mimeType = 'audio/webm;codecs=opus'
     if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
       mimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
     }
 
-    const recorderOpts = { audioBitsPerSecond: 256000 }
+    const recorderOpts = { audioBitsPerSecond: 128000 }
     if (mimeType) recorderOpts.mimeType = mimeType
 
     const recorder = new MediaRecorder(dest.stream, recorderOpts)
@@ -99,26 +128,37 @@ export function useRecorder() {
     }
 
     recorder.onstop = () => {
-      const blob = new Blob(chunks.current, { type: mimeType || 'audio/webm' })
+      const blob = new Blob(chunks.current, { type: recorder.mimeType || mimeType || 'audio/webm' })
+      setDurationMs(Date.now() - startTimeRef.current)
       setAudioBlob(blob)
+      setRecording(false)
       setTimeout(() => cleanup(), 150)
     }
 
     mediaRecorder.current = recorder
 
-    recorder.start(100)
+    // If the mic dies mid-take (unplugged, permission pulled), keep what we have.
+    stream.getAudioTracks().forEach(t => {
+      t.onended = () => { if (recorder.state === 'recording') recorder.stop() }
+    })
+
+    recorder.start(1000)
+    startTimeRef.current = Date.now()
+    if (onStart) { try { onStart() } catch (e) {} }
+
+    const limit = heatLength || MAX_RECORD_SECONDS
     setRecording(true)
     setLoading(false)
     setAudioBlob(null)
     setDuration(0)
-    setTimeRemaining(heatLength)
-    startTimeRef.current = Date.now()
+    setDurationMs(0)
+    setTimeRemaining(heatLength || null)
 
+    clearInterval(timerRef.current)
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
       setDuration(elapsed)
-      const remaining = heatLength - elapsed
-      setTimeRemaining(remaining > 0 ? remaining : 0)
+      if (heatLength) setTimeRemaining(Math.max(heatLength - elapsed, 0))
     }, 200)
 
     countdownRef.current = setTimeout(() => {
@@ -126,7 +166,8 @@ export function useRecorder() {
         mediaRecorder.current.stop()
         setRecording(false)
       }
-    }, heatLength * 1000)
+    }, limit * 1000)
+    return true
   }, [createChain])
 
   const stop = useCallback(() => {
@@ -146,7 +187,15 @@ export function useRecorder() {
   const reset = useCallback(() => {
     setAudioBlob(null)
     setDuration(0)
+    setDurationMs(0)
     setTimeRemaining(null)
+  }, [])
+
+  // Rough mic-side latency in seconds (0 where the browser doesn't say).
+  const getInputLatency = useCallback(() => {
+    const track = streamRef.current?.getAudioTracks?.()[0]
+    const l = track?.getSettings?.().latency
+    return typeof l === 'number' && isFinite(l) ? l : 0
   }, [])
 
   const toggleMonitor = useCallback((on) => {
@@ -157,6 +206,10 @@ export function useRecorder() {
 
   const destroy = useCallback(() => {
     cleanup()
+    if (mediaRecorder.current?.state === 'recording') {
+      mediaRecorder.current.onstop = null
+      try { mediaRecorder.current.stop() } catch (e) {}
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
@@ -168,7 +221,7 @@ export function useRecorder() {
   }, [cleanup])
 
   return {
-    recording, loading, audioBlob, duration, timeRemaining, micReady,
-    start, stop, reset, cleanup, destroy, toggleMonitor
+    recording, loading, audioBlob, duration, durationMs, timeRemaining, micReady, error,
+    start, stop, reset, cleanup, destroy, toggleMonitor, getInputLatency
   }
 }

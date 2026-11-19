@@ -2,15 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import AudioPlayer from '../components/AudioPlayer'
-
-const CATEGORIES = [
-  { key: 'all', label: 'All' },
-  { key: 'boom-bap', label: 'Boom Bap' },
-  { key: 'trap', label: 'Trap' },
-  { key: 'chill', label: 'Chill' },
-  { key: 'dark', label: 'Dark' },
-  { key: 'hype', label: 'Hype' }
-]
+import { CATEGORIES, isPlayableBeat } from '../lib/beats'
 
 export default function Beats() {
   const [beats, setBeats] = useState([])
@@ -38,13 +30,15 @@ export default function Beats() {
   useEffect(() => { loadBeats() }, [tab, category, debouncedSearch])
 
   async function loadBeats() {
-    let query = supabase.from('beats').select('*').order('created_at', { ascending: false })
+    let query = supabase.from('beats').select('*')
+      .order('created_at', { ascending: false })
+      .order('title', { ascending: true })
     if (tab === 'curated') query = query.eq('is_curated', true)
     if (tab === 'mine') query = query.eq('uploaded_by', (await supabase.auth.getUser()).data.user?.id)
     if (category !== 'all') query = query.eq('category', category)
     if (debouncedSearch.trim()) query = query.ilike('title', `%${debouncedSearch.trim()}%`)
     const { data } = await query
-    setBeats(data || [])
+    setBeats((data || []).filter(isPlayableBeat))
   }
 
   async function uploadFile(file) {
@@ -184,7 +178,6 @@ export default function Beats() {
           <div className="tabs" style={{ marginBottom: 12 }}>
             {[
               { key: 'file', label: 'File' },
-              { key: 'youtube', label: 'YouTube' },
               { key: 'url', label: 'URL' }
             ].map(m => (
               <button key={m.key}
@@ -265,7 +258,7 @@ export default function Beats() {
       {beats.length === 0 && (
         <div className="empty">
           {search ? `No beats matching "${search}"`
-            : tab === 'mine' ? 'Drop a file, paste a URL, or rip from YouTube'
+            : tab === 'mine' ? 'Drop a file or paste a direct audio URL'
             : tab === 'curated' ? 'No beats in this category'
             : 'No community beats yet'}
         </div>
@@ -288,7 +281,7 @@ export default function Beats() {
             </button>
           </div>
           <div style={{ marginTop: 10 }}>
-            <AudioPlayer src={beat.audio_url} />
+            <AudioPlayer src={beat.audio_url} preload="none" />
           </div>
         </div>
       ))}
