@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import AudioPlayer from '../components/AudioPlayer'
+import { loadRounds, roundBeat } from '../lib/battles'
 
 export default function Challenge() {
   const { code } = useParams()
@@ -14,6 +15,7 @@ export default function Challenge() {
   const [notFound, setNotFound] = useState(false)
   const [copied, setCopied] = useState(false)
   const [participantCount, setParticipantCount] = useState(0)
+  const [joining, setJoining] = useState(false)
 
   useEffect(() => {
     loadChallenge()
@@ -30,36 +32,45 @@ export default function Challenge() {
     setBeat(b.beats)
     setParticipantCount(b.battle_participants?.length || 1)
 
-    const { data: f } = await supabase
-      .from('freestyles')
-      .select('*')
-      .eq('battle_id', b.id)
-      .order('round_number', { ascending: false })
-      .limit(1)
-      .single()
-    setFreestyle(f)
+    const rounds = await loadRounds(b.id)
+    setFreestyle(rounds[rounds.length - 1] || null)
   }
 
-  async function acceptChallenge() {
+  const alreadyIn = !!user && !!battle && (
+    battle.challenger_id === user.id ||
+    (battle.battle_participants || []).some(p => p.user_id === user.id)
+  )
+  // The beat the latest verse was spit over — "same beat" means this one.
+  const currentBeat = roundBeat(freestyle, beat)
+
+  async function acceptChallenge(pickBeat) {
     if (!user) { signIn(); return }
+    if (joining) return
+    setJoining(true)
 
-    // Join as participant
-    await supabase.from('battle_participants').insert({
-      battle_id: battle.id,
-      user_id: user.id,
-      role: 'participant'
-    })
+    if (!alreadyIn) {
+      // Join as participant
+      await supabase.from('battle_participants').upsert(
+        { battle_id: battle.id, user_id: user.id, role: 'participant' },
+        { onConflict: 'battle_id,user_id', ignoreDuplicates: true }
+      )
 
-    // Update battle status if still open
-    if (battle.status === 'open') {
-      await supabase
-        .from('battles')
-        .update({ opponent_id: user.id, status: 'active' })
-        .eq('id', battle.id)
+      // First taker flips the battle from open to active
+      if (battle.status === 'open') {
+        await supabase
+          .from('battles')
+          .update({ opponent_id: user.id, status: 'active' })
+          .eq('id', battle.id)
+      }
     }
 
     navigate('/record', {
-      state: { beat, battleId: battle.id, roundNumber: (freestyle?.round_number || 1) + 1 }
+      state: {
+        beat: currentBeat,
+        battleId: battle.id,
+        roundNumber: (freestyle?.round_number || 1) + 1,
+        pickBeat
+      }
     })
   }
 
@@ -67,9 +78,9 @@ export default function Challenge() {
     const url = window.location.href
     const text = "Someone just dropped a freestyle on Trappin Japan. You gonna let that slide?"
     if (navigator.share) {
-      navigator.share({ title: 'Trappin Japan Challenge', text, url })
+      navigator.share({ title: 'Trappin Japan Challenge', text, url }).catch(() => {})
     } else {
-      navigator.clipboard.writeText(url)
+      navigator.clipboard?.writeText(url)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -109,17 +120,45 @@ export default function Challenge() {
       <div className="card" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
-            <div className="beat-title">{beat?.title}</div>
+            <div className="beat-title">{currentBeat?.title}</div>
             <div className="beat-meta">Round {freestyle?.round_number || 1}</div>
           </div>
           <span className="badge badge-open">Listen First</span>
         </div>
-        {freestyle && <AudioPlayer src={freestyle.audio_url} beatSrc={beat?.audio_url} />}
+        {freestyle ? (
+          <AudioPlayer
+            src={freestyle.audio_url}
+            beatSrc={currentBeat?.audio_url}
+            beatOffsetMs={freestyle.beat_offset_ms}
+            durationMs={freestyle.duration_ms}
+          />
+        ) : (
+          <div className="beat-meta">No verse on this one yet</div>
+        )}
       </div>
 
-      <button className="btn btn-primary btn-full" onClick={acceptChallenge} style={{ maxWidth: 400 }}>
-        {user ? 'Accept Challenge & Record' : 'Sign In to Accept'}
-      </button>
+      {!user ? (
+        <button className="btn btn-primary btn-full" onClick={() => acceptChallenge(false)} style={{ maxWidth: 400 }}>
+          Sign In to Respond
+        </button>
+      ) : (
+        <>
+          <button className="btn btn-primary btn-full" onClick={() => acceptChallenge(false)}
+            disabled={joining} style={{ maxWidth: 400 }}>
+            Respond on This Beat
+          </button>
+          <button className="btn btn-secondary btn-full" onClick={() => acceptChallenge(true)}
+            disabled={joining} style={{ maxWidth: 400 }}>
+            Respond on Your Own Beat
+          </button>
+          {alreadyIn && (
+            <button className="btn btn-secondary btn-full" onClick={() => navigate(`/battles/${battle.id}`)}
+              style={{ maxWidth: 400 }}>
+              Open Full Battle
+            </button>
+          )}
+        </>
+      )}
 
       <button
         className="btn btn-secondary btn-full"

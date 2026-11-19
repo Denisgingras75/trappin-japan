@@ -15,11 +15,14 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 - Beat mixed on playback via AudioPlayer dual-source (voice + beat synced)
 - FX presets: Raw (bypass), Clean (compression+EQ), Studio (full 12-stage chain)
 - Beats hosted on Supabase storage (was archive.org, too slow)
+- Beat and recorder start in the same tick; device latency is saved per take (`beat_offset_ms`) and AudioPlayer delays the beat by it on playback
+- Every round stores its own `beat_id` — responders can keep the beat or pick their own
+- One AudioPlayer plays at a time; `stopAllPlayers()` runs before the mic opens
 
 ## Goals / Roadmap
 - [x] Voice-only recording (no speaker bleed)
 - [x] FX presets (Raw / Clean / Studio)
-- [x] Heat timer (60 / 90 / 120 / 180s)
+- [x] Heat timer (60 / 90 / 120 / 180s / no limit, capped at 20 min)
 - [x] Headphones / speakers mode
 - [x] Group battles (2+ people)
 - [x] Tagging targets ("who you dissing")
@@ -49,6 +52,7 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 | Record page UI | src/pages/Record.jsx |
 | Beat browser + search | src/pages/Beats.jsx |
 | Audio playback (dual-source) | src/components/AudioPlayer.jsx |
+| Beat picker (search + preview) | src/components/BeatPicker.jsx |
 | Battle thread | src/pages/BattleThread.jsx |
 | Challenge entry (public) | src/pages/Challenge.jsx |
 | Auth (Google OAuth) | src/hooks/useAuth.jsx |
@@ -58,4 +62,4 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 - `beats` — title, audio_url, category, bpm, mood, energy
 - `battles` — challenger_id, beat_id, share_code, status, max_participants
 - `battle_participants` — battle_id, user_id, role (creator/participant)
-- `freestyles` — battle_id, user_id, audio_url, round_number, targets[]
+- `freestyles` — battle_id, user_id, audio_url, round_number, targets[], beat_id, beat_offset_ms, duration_ms
