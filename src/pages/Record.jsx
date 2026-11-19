@@ -46,7 +46,14 @@ export default function Record() {
   } = useRecorder()
   const [saving, setSaving] = useState(false)
   const [monitoring, setMonitoring] = useState(false)
-  const [headphones, setHeadphones] = useState(false)
+  // Remembered per device — most people record the same way every time.
+  const [headphones, setHeadphonesState] = useState(() => {
+    try { return localStorage.getItem('tj_headphones') === '1' } catch (e) { return false }
+  })
+  const setHeadphones = (on) => {
+    setHeadphonesState(on)
+    try { localStorage.setItem('tj_headphones', on ? '1' : '0') } catch (e) {}
+  }
   const [shareCode, setShareCode] = useState(null)
   const [copied, setCopied] = useState(false)
   const [selectedBeat, setSelectedBeat] = useState(isPlayableBeat(beat) ? beat : null)
@@ -205,10 +212,9 @@ export default function Record() {
           setLatencyMs(Math.round(Math.min(Math.max(lat, 0), 0.5) * 1000))
         }
       })
-      if (ok && headphones) {
-        setMonitoring(true)
-        toggleMonitor(true)
-      }
+      // Hearing yourself through the browser arrives late (badly so on
+      // Bluetooth) and throws your timing, so it stays off unless asked for.
+      if (ok && headphones && monitoring) toggleMonitor(true)
     }
   }
 
@@ -442,7 +448,7 @@ export default function Record() {
         }}>
           {headphones ? 'Headphones' : 'Speakers'}
         </div>
-        {recording && (
+        {headphones && (
           <button
             className="fx-badge"
             onClick={() => {
@@ -457,7 +463,7 @@ export default function Record() {
               color: monitoring ? 'var(--color-green)' : 'var(--color-text-muted)'
             }}
           >
-            {monitoring ? 'Monitor ON' : 'Monitor OFF'}
+            {monitoring ? 'Hear myself: ON' : 'Hear myself: OFF'}
           </button>
         )}
       </div>

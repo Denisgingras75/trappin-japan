@@ -5,6 +5,8 @@ import { useAuth } from '../hooks/useAuth'
 import AudioPlayer from '../components/AudioPlayer'
 import { loadRounds, roundBeat } from '../lib/battles'
 
+const RESPOND_KEY = 'tj_pending_respond'
+
 export default function Challenge() {
   const { code } = useParams()
   const { user, signIn } = useAuth()
@@ -44,7 +46,12 @@ export default function Challenge() {
   const currentBeat = roundBeat(freestyle, beat)
 
   async function acceptChallenge(pickBeat) {
-    if (!user) { signIn(); return }
+    if (!user) {
+      // Remember the tap so they land straight in the booth after sign-in.
+      try { sessionStorage.setItem(RESPOND_KEY, JSON.stringify({ code, pickBeat: !!pickBeat })) } catch (e) {}
+      signIn()
+      return
+    }
     if (joining) return
     setJoining(true)
 
@@ -86,6 +93,16 @@ export default function Challenge() {
     }
   }
 
+  // Came back from sign-in after tapping Respond → carry on automatically.
+  useEffect(() => {
+    if (!user || !battle) return
+    let pending = null
+    try { pending = JSON.parse(sessionStorage.getItem(RESPOND_KEY)) } catch (e) {}
+    if (!pending) return
+    try { sessionStorage.removeItem(RESPOND_KEY) } catch (e) {}
+    if (pending.code === code) acceptChallenge(pending.pickBeat)
+  }, [user, battle])
+
   if (notFound) {
     return (
       <div className="auth-page">
@@ -107,9 +124,6 @@ export default function Challenge() {
   return (
     <div className="record-page">
       <h1 style={{ fontSize: '2rem' }}>You've Been Called Out</h1>
-      <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', maxWidth: 300 }}>
-        Someone dropped a freestyle and thinks you can't match it. Prove them wrong.
-      </p>
 
       {participantCount > 2 && (
         <div className="badge badge-active" style={{ fontSize: '0.7rem' }}>
@@ -117,14 +131,8 @@ export default function Challenge() {
         </div>
       )}
 
-      <div className="card" style={{ width: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div>
-            <div className="beat-title">{currentBeat?.title}</div>
-            <div className="beat-meta">Round {freestyle?.round_number || 1}</div>
-          </div>
-          <span className="badge badge-open">Listen First</span>
-        </div>
+      <div className="card step-card">
+        <div className="step-label">1 &middot; Listen</div>
         {freestyle ? (
           <AudioPlayer
             src={freestyle.audio_url}
@@ -135,38 +143,36 @@ export default function Challenge() {
         ) : (
           <div className="beat-meta">No verse on this one yet</div>
         )}
+        <div className="beat-meta" style={{ marginTop: 10 }}>
+          Round {freestyle?.round_number || 1}{currentBeat ? ` \u00b7 Beat: ${currentBeat.title}` : ''}
+        </div>
       </div>
 
-      {!user ? (
-        <button className="btn btn-primary btn-full" onClick={() => acceptChallenge(false)} style={{ maxWidth: 400 }}>
-          Sign In to Respond
+      <div className="card step-card">
+        <div className="step-label">2 &middot; Respond</div>
+        <button className="btn btn-primary btn-full btn-big" onClick={() => acceptChallenge(false)} disabled={joining}>
+          {joining ? 'Loading...' : 'Respond'}
         </button>
-      ) : (
-        <>
-          <button className="btn btn-primary btn-full" onClick={() => acceptChallenge(false)}
-            disabled={joining} style={{ maxWidth: 400 }}>
-            Respond on This Beat
+        <div className="beat-meta" style={{ marginTop: 10, textAlign: 'center' }}>
+          {user ? 'Same beat, your verse.' : 'Quick Google sign-in, then you\'re recording.'}
+        </div>
+        <div style={{ textAlign: 'center', marginTop: 4 }}>
+          <button className="link-btn" onClick={() => acceptChallenge(true)} disabled={joining}>
+            Use a different beat
           </button>
-          <button className="btn btn-secondary btn-full" onClick={() => acceptChallenge(true)}
-            disabled={joining} style={{ maxWidth: 400 }}>
-            Respond on Your Own Beat
-          </button>
-          {alreadyIn && (
-            <button className="btn btn-secondary btn-full" onClick={() => navigate(`/battles/${battle.id}`)}
-              style={{ maxWidth: 400 }}>
-              Open Full Battle
-            </button>
-          )}
-        </>
-      )}
+        </div>
+      </div>
 
-      <button
-        className="btn btn-secondary btn-full"
-        onClick={shareChallenge}
-        style={{ maxWidth: 400 }}
-      >
-        {copied ? 'Link Copied!' : 'Share This Challenge'}
-      </button>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+        <button className="link-btn" onClick={shareChallenge}>
+          {copied ? 'Link copied!' : 'Share this battle'}
+        </button>
+        {alreadyIn && (
+          <button className="link-btn" onClick={() => navigate(`/battles/${battle.id}`)}>
+            See the whole battle
+          </button>
+        )}
+      </div>
     </div>
   )
 }

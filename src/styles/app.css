@@ -802,3 +802,16 @@ h2 {
   font-family: var(--font-mono);
   text-align: center;
 }
+
+/* Challenge page: two obvious steps */
+.step-card { width: 100%; max-width: 420px; }
+.step-label {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-neon-cyan);
+  margin-bottom: 12px;
+}
+.btn-big { padding: 18px; font-size: 1.1rem; }
+.link-btn:disabled { opacity: 0.5; }
