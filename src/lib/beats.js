@@ -54,6 +54,18 @@ async function measureBeat(file) {
   }
 }
 
+// "cffcc51b-…-96e1f4a29a72_You_want_it (1).mp3" → "You want it"
+export const titleFromFile = (name) => {
+  const t = name
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')
+    .replace(/\(\d+\)/g, ' ')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return (t || 'Untitled beat').slice(0, 60)
+}
+
 export const MAX_BEAT_BYTES = 40 * 1024 * 1024
 
 // Upload a beat file and add it to the shared library, where everyone can
@@ -84,7 +96,7 @@ export async function uploadBeat(supabase, file, title) {
 
   const { data: { publicUrl } } = supabase.storage.from('audio').getPublicUrl(path)
   const row = {
-    title: (title || '').trim() || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Untitled beat',
+    title: (title || '').trim() || titleFromFile(file.name),
     audio_url: publicUrl,
     uploaded_by: user.id,
     is_curated: false
