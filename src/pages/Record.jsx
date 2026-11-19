@@ -7,6 +7,9 @@ import AudioPlayer, { stopAllPlayers } from '../components/AudioPlayer'
 import BeatPicker from '../components/BeatPicker'
 import { isPlayableBeat, beatGain, formatLength } from '../lib/beats'
 
+// Average level a take is brought to on playback (dBFS, voiced parts only).
+const VOICE_TARGET_DB = -17
+
 const NUDGE_KEY = 'tj_sync_nudge_ms'
 const readNudge = () => {
   try { return parseInt(localStorage.getItem(NUDGE_KEY), 10) || 0 } catch (e) { return 0 }
@@ -33,7 +36,7 @@ export default function Record() {
 
   const { user } = useAuth()
   const {
-    recording, loading, audioBlob, duration, durationMs, timeRemaining, error: micError,
+    recording, loading, audioBlob, duration, durationMs, levelDb, timeRemaining, error: micError,
     start, stop, reset, destroy, toggleMonitor, getInputLatency
   } = useRecorder()
   const [saving, setSaving] = useState(false)
@@ -224,6 +227,11 @@ export default function Record() {
     }
   }
 
+  // How much to turn this take up or down on playback so every voice sits
+  // at the same level against the beat, however loud the mic was.
+  const voiceGainDb = levelDb == null ? null
+    : Math.round(Math.min(Math.max(VOICE_TARGET_DB - levelDb, -10), 14) * 10) / 10
+
   const beatOffsetMs = Math.min(Math.max(latencyMs + nudgeMs, 0), 1000)
 
   const handleNudge = (delta) => {
@@ -258,6 +266,7 @@ export default function Record() {
       beat_id: selectedBeat.id,
       beat_offset_ms: beatOffsetMs,
       beat_start_ms: beatStartMs,
+      voice_gain_db: voiceGainDb,
       duration_ms: durationMs || null
     })
     if (error && (error.code === 'PGRST204' || error.code === '42703')) {
@@ -496,6 +505,7 @@ export default function Record() {
               beatSrc={selectedBeat.audio_url}
               beatOffsetMs={beatOffsetMs}
               beatStartMs={beatStartMs}
+              voiceGainDb={voiceGainDb}
               beatGainDb={selectedBeat.gain_db}
               durationMs={durationMs}
             />

@@ -140,6 +140,7 @@ export default function Challenge() {
             beatOffsetMs={freestyle.beat_offset_ms}
             beatStartMs={freestyle.beat_start_ms}
             beatGainDb={currentBeat?.gain_db}
+            voiceGainDb={freestyle.voice_gain_db}
             durationMs={freestyle.duration_ms}
           />
         ) : (

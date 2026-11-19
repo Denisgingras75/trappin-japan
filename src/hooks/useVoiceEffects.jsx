@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 
 // Pro vocal chain optimized for phone mics + headphones
 // Presets: raw (bypass), clean (polish), studio (full production)
@@ -51,157 +51,80 @@ function createRawChain(ctx, source) {
   return gain
 }
 
-function createCleanChain(ctx, source) {
-  // HPF → comp → de-ess → warmth → box cut → presence → air → limiter
-  // No reverb, delay, exciter, or stereo width
-
-  const subCut = ctx.createBiquadFilter()
-  subCut.type = 'highpass'
-  subCut.frequency.value = 60
-  subCut.Q.value = 1.2
-
-  const gate = ctx.createBiquadFilter()
-  gate.type = 'highpass'
-  gate.frequency.value = 100
-  gate.Q.value = 0.7
+// Shared front end for Clean and Studio: rumble filter → one gentle
+// compressor → corrective EQ. Returns the last node.
+//
+// Why so gentle: DynamicsCompressorNode adds its own make-up gain, so the
+// old stack (6:1 at -26 dB into 3:1 into a limiter, plus +4 dB of manual
+// make-up) lifted everything between words — room noise and the beat
+// leaking from the speaker — by well over 20 dB. One moderate stage keeps
+// the voice even without dragging the background up with it.
+function createVoiceCore(ctx, source) {
+  const hpf = ctx.createBiquadFilter()
+  hpf.type = 'highpass'
+  hpf.frequency.value = 90
+  hpf.Q.value = 0.7
 
   const comp = ctx.createDynamicsCompressor()
-  comp.threshold.value = -26
-  comp.knee.value = 6
-  comp.ratio.value = 6
-  comp.attack.value = 0.003
-  comp.release.value = 0.1
-
-  const comp2 = ctx.createDynamicsCompressor()
-  comp2.threshold.value = -16
-  comp2.knee.value = 10
-  comp2.ratio.value = 3
-  comp2.attack.value = 0.01
-  comp2.release.value = 0.15
-
-  const deess = ctx.createBiquadFilter()
-  deess.type = 'peaking'
-  deess.frequency.value = 6500
-  deess.gain.value = -6
-  deess.Q.value = 3
-
-  const deess2 = ctx.createBiquadFilter()
-  deess2.type = 'peaking'
-  deess2.frequency.value = 8500
-  deess2.gain.value = -3
-  deess2.Q.value = 2
-
-  const warmth = ctx.createBiquadFilter()
-  warmth.type = 'peaking'
-  warmth.frequency.value = 200
-  warmth.gain.value = 4
-  warmth.Q.value = 0.6
+  comp.threshold.value = -20
+  comp.knee.value = 12
+  comp.ratio.value = 3
+  comp.attack.value = 0.005
+  comp.release.value = 0.12
 
   const boxCut = ctx.createBiquadFilter()
   boxCut.type = 'peaking'
-  boxCut.frequency.value = 450
-  boxCut.gain.value = -1.5
-  boxCut.Q.value = 1.2
+  boxCut.frequency.value = 400
+  boxCut.gain.value = -2
+  boxCut.Q.value = 1.0
 
   const presence = ctx.createBiquadFilter()
   presence.type = 'peaking'
-  presence.frequency.value = 3000
-  presence.gain.value = 5
+  presence.frequency.value = 3500
+  presence.gain.value = 3
   presence.Q.value = 0.8
+
+  const deess = ctx.createBiquadFilter()
+  deess.type = 'peaking'
+  deess.frequency.value = 7000
+  deess.gain.value = -3
+  deess.Q.value = 2
 
   const air = ctx.createBiquadFilter()
   air.type = 'highshelf'
-  air.frequency.value = 12000
+  air.frequency.value = 11000
   air.gain.value = 2
 
+  source.connect(hpf)
+  hpf.connect(comp)
+  comp.connect(boxCut)
+  boxCut.connect(presence)
+  presence.connect(deess)
+  deess.connect(air)
+  return air
+}
+
+// Catches stray peaks only; it is not there to add loudness.
+function createLimiter(ctx) {
   const limiter = ctx.createDynamicsCompressor()
-  limiter.threshold.value = -2
+  limiter.threshold.value = -3
   limiter.knee.value = 0
   limiter.ratio.value = 20
-  limiter.attack.value = 0.0003
-  limiter.release.value = 0.025
+  limiter.attack.value = 0.001
+  limiter.release.value = 0.05
+  return limiter
+}
 
-  const makeup = ctx.createGain()
-  makeup.gain.value = 1.6
-
-  source.connect(subCut)
-  subCut.connect(gate)
-  gate.connect(comp)
-  comp.connect(comp2)
-  comp2.connect(deess)
-  deess.connect(deess2)
-  deess2.connect(warmth)
-  warmth.connect(boxCut)
-  boxCut.connect(presence)
-  presence.connect(air)
-  air.connect(makeup)
-  makeup.connect(limiter)
-
+function createCleanChain(ctx, source) {
+  const core = createVoiceCore(ctx, source)
+  const limiter = createLimiter(ctx)
+  core.connect(limiter)
   return limiter
 }
 
 function createStudioChain(ctx, source) {
-  // Full chain: gate → HPF → comp → de-ess → warmth → box cut → presence → air
-  //   → exciter → stereo width → reverb → delay → limiter
-
-  const subCut = ctx.createBiquadFilter()
-  subCut.type = 'highpass'
-  subCut.frequency.value = 60
-  subCut.Q.value = 1.2
-
-  const gate = ctx.createBiquadFilter()
-  gate.type = 'highpass'
-  gate.frequency.value = 100
-  gate.Q.value = 0.7
-
-  const comp = ctx.createDynamicsCompressor()
-  comp.threshold.value = -26
-  comp.knee.value = 6
-  comp.ratio.value = 6
-  comp.attack.value = 0.003
-  comp.release.value = 0.1
-
-  const comp2 = ctx.createDynamicsCompressor()
-  comp2.threshold.value = -16
-  comp2.knee.value = 10
-  comp2.ratio.value = 3
-  comp2.attack.value = 0.01
-  comp2.release.value = 0.15
-
-  const deess = ctx.createBiquadFilter()
-  deess.type = 'peaking'
-  deess.frequency.value = 6500
-  deess.gain.value = -6
-  deess.Q.value = 3
-
-  const deess2 = ctx.createBiquadFilter()
-  deess2.type = 'peaking'
-  deess2.frequency.value = 8500
-  deess2.gain.value = -3
-  deess2.Q.value = 2
-
-  const warmth = ctx.createBiquadFilter()
-  warmth.type = 'peaking'
-  warmth.frequency.value = 200
-  warmth.gain.value = 4
-  warmth.Q.value = 0.6
-
-  const boxCut = ctx.createBiquadFilter()
-  boxCut.type = 'peaking'
-  boxCut.frequency.value = 450
-  boxCut.gain.value = -1.5
-  boxCut.Q.value = 1.2
-
-  const presence = ctx.createBiquadFilter()
-  presence.type = 'peaking'
-  presence.frequency.value = 3000
-  presence.gain.value = 5
-  presence.Q.value = 0.8
-
-  const air = ctx.createBiquadFilter()
-  air.type = 'highshelf'
-  air.frequency.value = 12000
-  air.gain.value = 2
+  // Clean core → exciter → plate reverb + slapback → limiter
+  const air = createVoiceCore(ctx, source)
 
   // Harmonic exciter (uses pre-computed curve)
   const exciter = ctx.createWaveShaper()
@@ -251,28 +174,11 @@ function createStudioChain(ctx, source) {
   slapFilter2.type = 'lowpass'
   slapFilter2.frequency.value = 2500
 
-  // Final limiter
-  const limiter = ctx.createDynamicsCompressor()
-  limiter.threshold.value = -2
-  limiter.knee.value = 0
-  limiter.ratio.value = 20
-  limiter.attack.value = 0.0003
-  limiter.release.value = 0.025
+  const limiter = createLimiter(ctx)
 
   const makeup = ctx.createGain()
-  makeup.gain.value = 1.8
-
-  // Wire it up
-  source.connect(subCut)
-  subCut.connect(gate)
-  gate.connect(comp)
-  comp.connect(comp2)
-  comp2.connect(deess)
-  deess.connect(deess2)
-  deess2.connect(warmth)
-  warmth.connect(boxCut)
-  boxCut.connect(presence)
-  presence.connect(air)
+  // Brings Studio's dry/wet blend back up to Clean's level.
+  makeup.gain.value = 1.6
 
   // Exciter parallel blend
   air.connect(exciter)
@@ -316,11 +222,13 @@ function createStudioChain(ctx, source) {
 
 const PRESETS = { raw: createRawChain, clean: createCleanChain, studio: createStudioChain }
 
+export function buildChain(audioContext, source, preset = 'clean') {
+  const builder = PRESETS[preset] || PRESETS.clean
+  return builder(audioContext, source)
+}
+
 export function useVoiceEffects() {
-  const createChain = useCallback((audioContext, source, preset = 'clean') => {
-    const builder = PRESETS[preset] || PRESETS.clean
-    return builder(audioContext, source)
-  }, [])
+  const createChain = useCallback(buildChain, [])
 
   return { createChain }
 }

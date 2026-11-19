@@ -109,6 +109,7 @@ export default function BattleThread() {
                 beatOffsetMs={round.beat_offset_ms}
                 beatStartMs={round.beat_start_ms}
                 beatGainDb={rBeat?.gain_db}
+                voiceGainDb={round.voice_gain_db}
                 durationMs={round.duration_ms}
                 accent={isMine}
               />

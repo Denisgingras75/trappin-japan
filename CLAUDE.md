@@ -13,7 +13,8 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 - Voice-only recording: mic → effects chain → MediaRecorder (beat NOT in recording)
 - Beat plays via native `<audio>` element (no AudioContext routing)
 - Beat mixed on playback via AudioPlayer dual-source (voice + beat synced)
-- FX presets: Raw (bypass), Clean (compression+EQ), Studio (full 12-stage chain)
+- FX presets: Raw (bypass), Clean (one gentle compressor + EQ + limiter), Studio (Clean + exciter/reverb/slap). Keep compression light: DynamicsCompressorNode adds its own make-up gain, and stacking stages pumps room noise and speaker bleed
+- Take loudness is metered while recording and saved as `voice_gain_db`; playback levels voice against the beat with it
 - Beats hosted on Supabase storage (was archive.org, too slow)
 - Beat and recorder start in the same tick; device latency is saved per take (`beat_offset_ms`) and AudioPlayer delays the beat by it on playback
 - Every round stores its own `beat_id` — responders can keep the beat or pick their own
@@ -62,4 +63,4 @@ Async rap battle app. Pick a beat, record a freestyle, challenge your boys.
 - `beats` — title, audio_url, category, bpm, mood, energy, duration_ms, gain_db (loudness trim), lead_in_ms (skipped dead air)
 - `battles` — challenger_id, beat_id, share_code, status, max_participants
 - `battle_participants` — battle_id, user_id, role (creator/participant)
-- `freestyles` — battle_id, user_id, audio_url, round_number, targets[], beat_id, beat_offset_ms, beat_start_ms, duration_ms
+- `freestyles` — battle_id, user_id, audio_url, round_number, targets[], beat_id, beat_offset_ms, beat_start_ms, voice_gain_db, duration_ms
